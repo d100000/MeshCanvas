@@ -1,6 +1,4 @@
-const MODEL_DISPLAY_NAMES = {
-  'XAIO-O-G5-4': 'Gpt-5.4',
-};
+const MODEL_DISPLAY_NAMES = {};
 
 const MODEL_NODE_WIDTH = 420;
 const USER_NODE_WIDTH = 500;
@@ -973,6 +971,13 @@ function handleEvent(payload) {
       if (payload.search_available === false) {
         searchToggleEl.checked = false;
         searchToggleEl.disabled = true;
+      }
+      {
+        const banner = document.getElementById('needsSetupBanner');
+        if (banner) {
+          banner.classList.toggle('hidden', !payload.needs_setup);
+        }
+        sendBtn.disabled = Boolean(payload.needs_setup);
       }
       refreshStatus();
       break;

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>初始配置 · 无限画布多模型聊天室</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body class="auth-body">
+    <main class="auth-shell">
+      <section class="auth-card setup-card">
+        <div class="auth-brand">
+          <span class="auth-badge">Initial Setup</span>
+          <h1>初始配置</h1>
+          <p>首次使用，请配置大模型 API 连接信息和模型列表。</p>
+        </div>
+
+        <form id="setupForm" class="setup-form">
+          <label class="auth-field">
+            <span>API 地址</span>
+            <input name="base_url" type="url" placeholder="https://api.openai.com/v1" required />
+          </label>
+
+          <label class="auth-field">
+            <span>API 格式</span>
+            <select name="api_format">
+              <option value="openai" selected>OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+            </select>
+          </label>
+
+          <label class="auth-field">
+            <span>API Key</span>
+            <input name="API_key" type="password" placeholder="sk-..." required />
+          </label>
+
+          <div class="setup-models-section">
+            <div class="setup-models-header">
+              <span>模型列表</span>
+              <button type="button" id="addModelBtn" class="small-btn">＋ 添加模型</button>
+            </div>
+            <div class="setup-model-labels">
+              <span>显示名称</span>
+              <span>模型 ID（实际请求 API 用）</span>
+              <span></span>
+            </div>
+            <div id="modelList" class="setup-model-list"></div>
+          </div>
+
+          <button type="submit" class="primary-btn auth-submit">保存并开始</button>
+        </form>
+
+        <div id="setupMessage" class="auth-message" aria-live="polite"></div>
+        <p class="auth-note">配置将保存到本地 models_setting.json，同时初始化数据库。完成后跳转到注册页面。</p>
+      </section>
+    </main>
+    <script src="/static/setup.js"></script>
+  </body>
+</html>

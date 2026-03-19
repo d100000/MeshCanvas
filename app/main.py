@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json as _json
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
@@ -15,7 +17,7 @@ from openai import AsyncOpenAI
 
 from app.auth import AuthError, AuthManager, SESSION_COOKIE_NAME, SESSION_DAYS
 from app.chat_service import MultiModelChatService
-from app.config import get_settings
+from app.config import get_settings, is_configured, save_settings
 from app.database import LocalDatabase
 from app.request_logger import RequestLogger
 from app.search_service import FirecrawlSearchService, SearchBundle, SearchItem
@@ -37,6 +39,49 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 async def initialize_local_database() -> None:
     await database.initialize()
     await database.delete_expired_sessions()
+    await _ensure_default_admin()
+
+
+async def _ensure_default_admin() -> None:
+    existing = await database.get_user_by_username("admin")
+    if existing:
+        expected = AuthManager._hash_password("admin", existing["password_salt"])
+        if hmac.compare_digest(expected, existing["password_hash"]):
+            await _seed_admin_settings_if_empty(existing["id"])
+            return
+        salt = secrets.token_hex(16)
+        password_hash = AuthManager._hash_password("admin", salt)
+        await database.update_user_password("admin", password_hash, salt)
+        await _seed_admin_settings_if_empty(existing["id"])
+        return
+    salt = secrets.token_hex(16)
+    password_hash = AuthManager._hash_password("admin", salt)
+    admin_id = await database.create_user("admin", password_hash, salt)
+    if admin_id:
+        await _seed_admin_settings_if_empty(admin_id)
+
+
+async def _seed_admin_settings_if_empty(user_id: int) -> None:
+    existing_settings = await database.get_user_settings(user_id)
+    if existing_settings and existing_settings.get("api_key"):
+        return
+    if not is_configured():
+        return
+    try:
+        settings = get_settings()
+        models = [{"name": m.name, "id": m.id} for m in settings.models]
+        await database.upsert_user_settings(
+            user_id,
+            api_base_url=settings.base_url,
+            api_format=settings.api_format,
+            api_key=settings.api_key,
+            models_json=_json.dumps(models, ensure_ascii=False),
+            firecrawl_api_key="",
+            firecrawl_country="CN",
+            firecrawl_timeout_ms=45000,
+        )
+    except Exception:
+        pass
 
 
 BASE_SYSTEM_PROMPT = (
@@ -80,16 +125,18 @@ async def log_http_request(request: Request, call_next):
     response = await call_next(request)
     duration_ms = round((perf_counter() - started_at) * 1000, 2)
     client_host = request.client.host if request.client else "unknown"
-    await request_logger.log_event(
-        {
-            "type": "http_request",
-            "method": request.method,
-            "path": request.url.path,
-            "query": str(request.url.query),
-            "status_code": response.status_code,
-            "client_id": client_host,
-            "duration_ms": duration_ms,
-        }
+    asyncio.create_task(
+        request_logger.log_event(
+            {
+                "type": "http_request",
+                "method": request.method,
+                "path": request.url.path,
+                "query": str(request.url.query),
+                "status_code": response.status_code,
+                "client_id": client_host,
+                "duration_ms": duration_ms,
+            }
+        )
     )
     for key, value in security_headers.items():
         response.headers.setdefault(key, value)
@@ -163,26 +210,24 @@ async def _require_origin(request: Request) -> None:
         raise OriginError("非法来源。")
 
 
-_shared_openai_client: AsyncOpenAI | None = None
-
-
-def _get_shared_openai_client() -> AsyncOpenAI:
-    global _shared_openai_client
-    if _shared_openai_client is None:
-        settings = get_settings()
-        _shared_openai_client = AsyncOpenAI(api_key=settings.api_key, base_url=settings.base_url)
-    return _shared_openai_client
-
-
-def _pick_analysis_model() -> str:
-    """Pick Kimi as the dedicated conversation analysis model."""
-    settings = get_settings()
-    if "Kimi-K2.5" in settings.models:
+def _pick_analysis_model(models: list[dict[str, str]]) -> str:
+    names = [m["name"] for m in models]
+    if "Kimi-K2.5" in names:
         return "Kimi-K2.5"
-    for model in settings.models:
-        if "kimi" in model.lower():
-            return model
-    return settings.models[0] if settings.models else ""
+    for name in names:
+        if "kimi" in name.lower():
+            return name
+    return names[0] if names else ""
+
+
+def _build_model_id_map(models: list[dict[str, str]]) -> dict[str, str]:
+    return {m["name"]: m["id"] for m in models}
+
+
+def _mask_key(key: str) -> str:
+    if not key or len(key) <= 7:
+        return "****" if key else ""
+    return key[:3] + "****" + key[-4:]
 
 
 def _extract_completion_text(response: object) -> str:
@@ -208,12 +253,16 @@ def _extract_completion_text(response: object) -> str:
     return str(content or "").strip()
 
 
-async def _summarize_selection_bundle(bundle: str, count: int) -> tuple[str, str]:
-    model = _pick_analysis_model()
+async def _summarize_selection_bundle(
+    bundle: str, count: int, *, user_settings: dict,
+) -> tuple[str, str]:
+    models = user_settings["models"]
+    model = _pick_analysis_model(models)
     if not model:
         raise RuntimeError("未配置可用的摘要模型。")
 
-    client = _get_shared_openai_client()
+    id_map = _build_model_id_map(models)
+    client = AsyncOpenAI(api_key=user_settings["api_key"], base_url=user_settings["api_base_url"])
     clipped_bundle = bundle[:12000]
     prompt = (
         f"请将用户圈选的 {count} 个无限画布节点压缩成可供下一轮对话继续使用的上下文。\n"
@@ -226,7 +275,7 @@ async def _summarize_selection_bundle(bundle: str, count: int) -> tuple[str, str
         f"{clipped_bundle}"
     )
     response = await client.chat.completions.create(
-        model=model,
+        model=id_map.get(model, model),
         messages=[
             {
                 "role": "system",
@@ -242,13 +291,16 @@ async def _summarize_selection_bundle(bundle: str, count: int) -> tuple[str, str
     return summary[:1200], model
 
 
-async def _analyze_conversation(messages: list[dict[str, str]]) -> tuple[dict[str, str], str]:
-    """Use Kimi to analyze a conversation: generate title, key points, and summary."""
-    model = _pick_analysis_model()
+async def _analyze_conversation(
+    messages: list[dict[str, str]], *, user_settings: dict,
+) -> tuple[dict[str, str], str]:
+    models = user_settings["models"]
+    model = _pick_analysis_model(models)
     if not model:
         raise RuntimeError("未配置可用的分析模型。")
 
-    client = _get_shared_openai_client()
+    id_map = _build_model_id_map(models)
+    client = AsyncOpenAI(api_key=user_settings["api_key"], base_url=user_settings["api_base_url"])
 
     conversation_text = ""
     for msg in messages:
@@ -270,7 +322,7 @@ async def _analyze_conversation(messages: list[dict[str, str]]) -> tuple[dict[st
     )
 
     response = await client.chat.completions.create(
-        model=model,
+        model=id_map.get(model, model),
         messages=[
             {"role": "system", "content": "你是会话分析助手，只输出 JSON，不要输出任何解释。"},
             {"role": "user", "content": prompt},
@@ -296,20 +348,218 @@ async def _analyze_conversation(messages: list[dict[str, str]]) -> tuple[dict[st
     return result, model
 
 
+async def _load_user_settings_or_error(request: Request) -> tuple[dict | None, dict | None, JSONResponse | None]:
+    try:
+        user = await _require_user(request)
+    except AuthError as exc:
+        return None, None, JSONResponse({"detail": str(exc)}, status_code=401)
+    us = await database.get_user_settings(user["user_id"])
+    if not us or not us.get("api_key"):
+        return None, None, JSONResponse({"detail": "请先在设置中配置 API 连接信息。"}, status_code=400)
+    return user, us, None
+
+
+def _html_response(path: Path) -> FileResponse:
+    resp = FileResponse(path)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/")
-async def index(request: Request) -> FileResponse:
+async def index(request: Request) -> Response:
+    if not is_configured():
+        return RedirectResponse(url="/setup", status_code=303)
     user = await _get_request_user(request)
     if not user:
-        return FileResponse(STATIC_DIR / "login.html")
-    return FileResponse(STATIC_DIR / "index.html")
+        return _html_response(STATIC_DIR / "login.html")
+    return _html_response(STATIC_DIR / "index.html")
+
+
+@app.get("/setup")
+async def setup_page(request: Request) -> Response:
+    if is_configured():
+        return RedirectResponse(url="/", status_code=303)
+    return _html_response(STATIC_DIR / "setup.html")
+
+
+@app.post("/api/setup")
+async def save_setup_config(request: Request) -> JSONResponse:
+    if is_configured():
+        return JSONResponse({"detail": "已完成配置，无法重复设置。"}, status_code=400)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "请求体格式不正确。"}, status_code=400)
+
+    base_url = str(payload.get("base_url", "")).strip()
+    api_format = str(payload.get("api_format", "openai")).strip()
+    api_key = str(payload.get("API_key", "")).strip()
+    models_raw = payload.get("models", [])
+
+    if not base_url:
+        return JSONResponse({"detail": "请填写 API 地址。"}, status_code=400)
+    if not api_key:
+        return JSONResponse({"detail": "请填写 API Key。"}, status_code=400)
+    if not isinstance(models_raw, list) or not models_raw:
+        return JSONResponse({"detail": "请至少添加一个模型。"}, status_code=400)
+    if api_format not in ("openai", "anthropic"):
+        return JSONResponse({"detail": "API 格式仅支持 openai 或 anthropic。"}, status_code=400)
+
+    models = []
+    for item in models_raw:
+        if not isinstance(item, dict):
+            return JSONResponse({"detail": "模型格式不正确。"}, status_code=400)
+        name = str(item.get("name", "")).strip()
+        model_id = str(item.get("id", "")).strip()
+        if not name or not model_id:
+            return JSONResponse({"detail": "模型名称和模型 ID 不能为空。"}, status_code=400)
+        models.append({"name": name, "id": model_id})
+
+    config_data = {
+        "base_url": base_url,
+        "api_format": api_format,
+        "API_key": api_key,
+        "models": models,
+    }
+
+    try:
+        save_settings(config_data)
+    except Exception as exc:
+        return JSONResponse({"detail": f"保存配置失败：{exc}"}, status_code=500)
+
+    await database.initialize()
+
+    salt = secrets.token_hex(16)
+    password_hash = AuthManager._hash_password("admin", salt)
+    admin_id = await database.create_user("admin", password_hash, salt)
+
+    if admin_id and models:
+        await database.upsert_user_settings(
+            admin_id,
+            api_base_url=base_url,
+            api_format=api_format,
+            api_key=api_key,
+            models_json=_json.dumps(models, ensure_ascii=False),
+            firecrawl_api_key="",
+            firecrawl_country="CN",
+            firecrawl_timeout_ms=45000,
+        )
+
+    return JSONResponse({"ok": True})
+
+
+@app.get("/settings")
+async def settings_page(request: Request) -> Response:
+    if not is_configured():
+        return RedirectResponse(url="/setup", status_code=303)
+    user = await _get_request_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    return _html_response(STATIC_DIR / "settings.html")
+
+
+@app.get("/api/settings")
+async def get_user_settings_api(request: Request) -> JSONResponse:
+    try:
+        user = await _require_user(request)
+    except AuthError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=401)
+
+    us = await database.get_user_settings(user["user_id"])
+    if not us:
+        return JSONResponse({
+            "api_base_url": "",
+            "api_format": "openai",
+            "api_key_masked": "",
+            "models": [],
+            "firecrawl_api_key_masked": "",
+            "firecrawl_country": "CN",
+            "firecrawl_timeout_ms": 45000,
+        })
+    return JSONResponse({
+        "api_base_url": us["api_base_url"],
+        "api_format": us["api_format"],
+        "api_key_masked": _mask_key(us["api_key"]),
+        "models": us["models"],
+        "firecrawl_api_key_masked": _mask_key(us["firecrawl_api_key"]),
+        "firecrawl_country": us["firecrawl_country"],
+        "firecrawl_timeout_ms": us["firecrawl_timeout_ms"],
+    })
+
+
+@app.put("/api/settings")
+async def update_user_settings_api(request: Request) -> JSONResponse:
+    try:
+        user = await _require_user(request)
+    except AuthError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=401)
+    try:
+        await _require_origin(request)
+    except OriginError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=403)
+
+    try:
+        payload = await _parse_json_body(request)
+    except AuthError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    api_base_url = str(payload.get("api_base_url", "")).strip()
+    api_format = str(payload.get("api_format", "openai")).strip()
+    api_key_raw = str(payload.get("api_key", "")).strip()
+    models_raw = payload.get("models", [])
+    firecrawl_key_raw = str(payload.get("firecrawl_api_key", "")).strip()
+    firecrawl_country = str(payload.get("firecrawl_country", "CN")).strip() or "CN"
+    try:
+        firecrawl_timeout = max(5000, min(int(payload.get("firecrawl_timeout_ms", 45000)), 120000))
+    except (TypeError, ValueError):
+        firecrawl_timeout = 45000
+
+    if not api_base_url:
+        return JSONResponse({"detail": "请填写 API 地址。"}, status_code=400)
+    if api_format not in ("openai", "anthropic"):
+        return JSONResponse({"detail": "API 格式仅支持 openai 或 anthropic。"}, status_code=400)
+
+    models = []
+    if isinstance(models_raw, list):
+        for item in models_raw:
+            if isinstance(item, dict):
+                name = str(item.get("name", "")).strip()
+                mid = str(item.get("id", "")).strip()
+                if name and mid:
+                    models.append({"name": name, "id": mid})
+    if not models:
+        return JSONResponse({"detail": "请至少添加一个模型。"}, status_code=400)
+
+    existing = await database.get_user_settings(user["user_id"])
+    if not api_key_raw and existing:
+        api_key_raw = existing["api_key"]
+    if not api_key_raw:
+        return JSONResponse({"detail": "请填写 API Key。"}, status_code=400)
+    if not firecrawl_key_raw and existing:
+        firecrawl_key_raw = existing["firecrawl_api_key"]
+
+    await database.upsert_user_settings(
+        user["user_id"],
+        api_base_url=api_base_url,
+        api_format=api_format,
+        api_key=api_key_raw,
+        models_json=_json.dumps(models, ensure_ascii=False),
+        firecrawl_api_key=firecrawl_key_raw,
+        firecrawl_country=firecrawl_country,
+        firecrawl_timeout_ms=firecrawl_timeout,
+    )
+    return JSONResponse({"ok": True})
 
 
 @app.get("/login")
 async def login_page(request: Request):
+    if not is_configured():
+        return RedirectResponse(url="/setup", status_code=303)
     user = await _get_request_user(request)
     if user:
         return RedirectResponse(url="/", status_code=303)
-    return FileResponse(STATIC_DIR / "login.html")
+    return _html_response(STATIC_DIR / "login.html")
 
 
 @app.get("/api/auth/session")
@@ -380,16 +630,19 @@ async def list_models(request: Request):
     user = await _get_request_user(request)
     if not user:
         return _unauthorized_json()
-    settings = get_settings()
-    return {"models": settings.models, "analysis_model": _pick_analysis_model()}
+    us = await database.get_user_settings(user["user_id"])
+    models = us["models"] if us else []
+    return {
+        "models": models,
+        "analysis_model": _pick_analysis_model(models),
+    }
 
 
 @app.post("/api/selection-summary")
 async def selection_summary(request: Request) -> JSONResponse:
-    try:
-        user = await _require_user(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=401)
+    user, us, err = await _load_user_settings_or_error(request)
+    if err:
+        return err
     try:
         await _require_origin(request)
     except OriginError as exc:
@@ -416,7 +669,7 @@ async def selection_summary(request: Request) -> JSONResponse:
         count = 1
 
     try:
-        summary, model = await _summarize_selection_bundle(bundle=bundle, count=count)
+        summary, model = await _summarize_selection_bundle(bundle=bundle, count=count, user_settings=us)
     except Exception as exc:
         await request_logger.log_event(
             {
@@ -445,11 +698,9 @@ async def selection_summary(request: Request) -> JSONResponse:
 
 @app.post("/api/conversation-analysis")
 async def conversation_analysis(request: Request) -> JSONResponse:
-    """Use Kimi to analyze a conversation thread: generate title, key points, summary, and tags."""
-    try:
-        user = await _require_user(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=401)
+    user, us, err = await _load_user_settings_or_error(request)
+    if err:
+        return err
     try:
         await _require_origin(request)
     except OriginError as exc:
@@ -485,7 +736,7 @@ async def conversation_analysis(request: Request) -> JSONResponse:
         return JSONResponse({"detail": "会话内容为空。"}, status_code=400)
 
     try:
-        result, model = await _analyze_conversation(messages)
+        result, model = await _analyze_conversation(messages, user_settings=us)
     except Exception as exc:
         await request_logger.log_event(
             {
@@ -617,6 +868,10 @@ async def save_cluster_position(request_id: str, request: Request) -> JSONRespon
 
 @app.websocket("/ws/chat")
 async def chat_socket(websocket: WebSocket) -> None:
+    if not is_configured():
+        await websocket.close(code=4503)
+        return
+
     if not _is_origin_allowed(websocket.headers.get("origin"), websocket.headers.get("host")):
         await websocket.close(code=4403)
         return
@@ -632,8 +887,23 @@ async def chat_socket(websocket: WebSocket) -> None:
     client_port = websocket.client.port if websocket.client else "unknown"
     client_id = f"{user['username']}@{client_host}:{client_port}"
 
-    service = MultiModelChatService(request_logger=request_logger, database=database)
-    search_service = FirecrawlSearchService()
+    user_settings = await database.get_user_settings(user["user_id"])
+    needs_setup = not user_settings or not user_settings.get("api_key")
+    if needs_setup:
+        user_settings = user_settings or {"models": [], "api_key": "", "api_base_url": "", "firecrawl_api_key": "", "firecrawl_country": "CN", "firecrawl_timeout_ms": 45000}
+
+    service = MultiModelChatService(
+        api_key=user_settings.get("api_key", ""),
+        base_url=user_settings.get("api_base_url", ""),
+        models=user_settings.get("models", []),
+        request_logger=request_logger,
+        database=database,
+    ) if not needs_setup else None
+    search_service = FirecrawlSearchService(
+        api_key=user_settings.get("firecrawl_api_key", ""),
+        country=user_settings.get("firecrawl_country", "CN"),
+        timeout_ms=user_settings.get("firecrawl_timeout_ms", 45000),
+    )
     threads: dict[str, ThreadState] = {}
     request_tasks: dict[str, asyncio.Task[None]] = {}
     background_tasks: set[asyncio.Task[object]] = set()
@@ -767,20 +1037,22 @@ async def chat_socket(websocket: WebSocket) -> None:
         finally:
             request_tasks.pop(thread.request_id, None)
 
+    user_models = service.models if service else []
     await request_logger.log_event(
         {
             "type": "ws_connect",
             "client_id": client_id,
-            "models": service.models,
+            "models": user_models,
             "search_enabled": search_service.enabled,
         }
     )
     await websocket.send_json(
         {
             "type": "meta",
-            "models": service.models,
-            "analysis_model": _pick_analysis_model(),
+            "models": user_models,
+            "analysis_model": _pick_analysis_model(user_settings.get("models", [])),
             "search_available": search_service.enabled,
+            "needs_setup": needs_setup,
             "username": user["username"],
         }
     )
@@ -789,7 +1061,7 @@ async def chat_socket(websocket: WebSocket) -> None:
         while True:
             payload = await websocket.receive_json()
             if not await rate_limiter.allow_async(f"ws-action:{user['username']}", limit=180, window_seconds=60):
-                await service._send_event(websocket, {"type": "error", "content": "请求过于频繁，请稍后再试。"})
+                await websocket.send_json({"type": "error", "content": "请求过于频繁，请稍后再试。"})
                 continue
 
             action = payload.get("action")
@@ -809,13 +1081,13 @@ async def chat_socket(websocket: WebSocket) -> None:
                     {
                         "type": "ws_clear",
                         "client_id": client_id,
-                        "models": service.models,
+                        "models": user_models,
                     }
                 )
                 await database.record_event(
                     event_type="ws_clear",
                     client_id=client_id,
-                    payload={"models": service.models},
+                    payload={"models": user_models},
                 )
                 await websocket.send_json({"type": "cleared"})
                 continue
@@ -828,6 +1100,10 @@ async def chat_socket(websocket: WebSocket) -> None:
                     continue
                 task.cancel()
                 await websocket.send_json({"type": "cancel_requested", "request_id": request_id})
+                continue
+
+            if needs_setup or service is None:
+                await websocket.send_json({"type": "error", "content": "请先在设置中配置 API 连接信息。"})
                 continue
 
             if action == "chat":

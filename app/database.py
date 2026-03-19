@@ -13,7 +13,7 @@ from app.config import get_database_path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class LocalDatabase:
@@ -43,6 +43,36 @@ class LocalDatabase:
 
     async def get_user_by_username(self, username: str) -> dict[str, Any] | None:
         return await self._run_read(self._get_user_by_username_sync, None, username)
+
+    async def update_user_password(self, username: str, password_hash: str, password_salt: str) -> None:
+        await self._run_write(self._update_user_password_sync, username, password_hash, password_salt)
+
+    async def get_user_settings(self, user_id: int) -> dict[str, Any] | None:
+        return await self._run_read(self._get_user_settings_sync, None, user_id)
+
+    async def upsert_user_settings(
+        self,
+        user_id: int,
+        *,
+        api_base_url: str,
+        api_format: str,
+        api_key: str,
+        models_json: str,
+        firecrawl_api_key: str,
+        firecrawl_country: str,
+        firecrawl_timeout_ms: int,
+    ) -> None:
+        await self._run_write(
+            self._upsert_user_settings_sync,
+            user_id,
+            api_base_url,
+            api_format,
+            api_key,
+            models_json,
+            firecrawl_api_key,
+            firecrawl_country,
+            firecrawl_timeout_ms,
+        )
 
     async def create_session(self, user_id: int, token_hash: str, expires_at: str) -> None:
         await self._run_write(self._create_session_sync, user_id, token_hash, expires_at)
@@ -272,14 +302,29 @@ class LocalDatabase:
                 CREATE INDEX IF NOT EXISTS idx_model_results_request_round ON model_results(request_id, round_number, model);
                 CREATE INDEX IF NOT EXISTS idx_request_events_request_id ON request_events(request_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_canvases_user_id ON canvases(user_id);
+
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    user_id INTEGER PRIMARY KEY,
+                    api_base_url TEXT NOT NULL DEFAULT '',
+                    api_format TEXT NOT NULL DEFAULT 'openai',
+                    api_key TEXT NOT NULL DEFAULT '',
+                    models_json TEXT NOT NULL DEFAULT '[]',
+                    firecrawl_api_key TEXT NOT NULL DEFAULT '',
+                    firecrawl_country TEXT NOT NULL DEFAULT 'CN',
+                    firecrawl_timeout_ms INTEGER NOT NULL DEFAULT 45000,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
                 """
             )
             now = self._now()
-            # Ensure older local databases pick up later-added chat request columns.
             self._ensure_chat_requests_schema_sync(conn)
             current_version = self._get_schema_version_sync(conn)
             if current_version < 3:
                 self._migrate_v2_to_v3_sync(conn)
+            if current_version < 4:
+                self._migrate_v3_to_v4_sync(conn)
             conn.execute(
                 """
                 INSERT INTO app_meta(key, value, updated_at)
@@ -327,6 +372,14 @@ class LocalDatabase:
             "password_salt": row[3],
             "created_at": row[4],
         }
+
+    def _update_user_password_sync(self, username: str, password_hash: str, password_salt: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET password_hash = ?, password_salt = ?, updated_at = ? WHERE username = ?",
+                (password_hash, password_salt, self._now(), username),
+            )
+            conn.commit()
 
     def _create_session_sync(self, user_id: int, token_hash: str, expires_at: str) -> None:
         now = self._now()
@@ -537,6 +590,81 @@ class LocalDatabase:
 
     def _migrate_v2_to_v3_sync(self, conn: sqlite3.Connection) -> None:
         self._ensure_chat_requests_schema_sync(conn)
+
+    def _migrate_v3_to_v4_sync(self, conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER PRIMARY KEY,
+                api_base_url TEXT NOT NULL DEFAULT '',
+                api_format TEXT NOT NULL DEFAULT 'openai',
+                api_key TEXT NOT NULL DEFAULT '',
+                models_json TEXT NOT NULL DEFAULT '[]',
+                firecrawl_api_key TEXT NOT NULL DEFAULT '',
+                firecrawl_country TEXT NOT NULL DEFAULT 'CN',
+                firecrawl_timeout_ms INTEGER NOT NULL DEFAULT 45000,
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            """
+        )
+
+    def _get_user_settings_sync(self, user_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT api_base_url, api_format, api_key, models_json,
+                          firecrawl_api_key, firecrawl_country, firecrawl_timeout_ms
+                   FROM user_settings WHERE user_id = ?""",
+                (user_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "api_base_url": row[0],
+            "api_format": row[1],
+            "api_key": row[2],
+            "models": json.loads(row[3]) if row[3] else [],
+            "firecrawl_api_key": row[4],
+            "firecrawl_country": row[5],
+            "firecrawl_timeout_ms": row[6],
+        }
+
+    def _upsert_user_settings_sync(
+        self,
+        user_id: int,
+        api_base_url: str,
+        api_format: str,
+        api_key: str,
+        models_json: str,
+        firecrawl_api_key: str,
+        firecrawl_country: str,
+        firecrawl_timeout_ms: int,
+    ) -> None:
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO user_settings(
+                       user_id, api_base_url, api_format, api_key, models_json,
+                       firecrawl_api_key, firecrawl_country, firecrawl_timeout_ms,
+                       created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET
+                       api_base_url=excluded.api_base_url,
+                       api_format=excluded.api_format,
+                       api_key=excluded.api_key,
+                       models_json=excluded.models_json,
+                       firecrawl_api_key=excluded.firecrawl_api_key,
+                       firecrawl_country=excluded.firecrawl_country,
+                       firecrawl_timeout_ms=excluded.firecrawl_timeout_ms,
+                       updated_at=excluded.updated_at""",
+                (
+                    user_id, api_base_url, api_format, api_key, models_json,
+                    firecrawl_api_key, firecrawl_country, firecrawl_timeout_ms,
+                    now, now,
+                ),
+            )
+            conn.commit()
 
     def _create_canvas_sync(self, user_id: int, name: str) -> str:
         from uuid import uuid4

@@ -9,7 +9,6 @@ from typing import Any
 from fastapi import WebSocket, WebSocketDisconnect
 from openai import AsyncOpenAI
 
-from app.config import get_settings
 from app.database import LocalDatabase
 from app.request_logger import RequestLogger
 
@@ -18,10 +17,18 @@ MAX_HISTORY_CHARS = 80_000
 
 
 class MultiModelChatService:
-    def __init__(self, request_logger: RequestLogger | None = None, database: LocalDatabase | None = None) -> None:
-        settings = get_settings()
-        self.models = settings.models
-        self.client = AsyncOpenAI(api_key=settings.api_key, base_url=settings.base_url)
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        models: list[dict[str, str]],
+        request_logger: RequestLogger | None = None,
+        database: LocalDatabase | None = None,
+    ) -> None:
+        self.models = [m["name"] for m in models]
+        self.model_id_map = {m["name"]: m["id"] for m in models}
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.request_logger = request_logger or RequestLogger()
         self.database = database
         self._send_lock = asyncio.Lock()
@@ -238,8 +245,9 @@ class MultiModelChatService:
     ) -> str:
         chunks: list[str] = []
         trimmed_history = self._trim_history(history)
+        api_model_id = self.model_id_map.get(model, model)
         stream = await self.client.chat.completions.create(
-            model=model,
+            model=api_model_id,
             messages=trimmed_history,
             stream=True,
         )

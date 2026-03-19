@@ -5,8 +5,6 @@ from typing import Any
 
 import httpx
 
-from app.config import get_firecrawl_api_key, get_firecrawl_country, get_firecrawl_timeout_ms
-
 
 @dataclass
 class SearchItem:
@@ -44,10 +42,10 @@ class SearchBundle:
 
 
 class FirecrawlSearchService:
-    def __init__(self) -> None:
-        self.api_key = get_firecrawl_api_key()
-        self.country = get_firecrawl_country()
-        self.timeout_ms = get_firecrawl_timeout_ms()
+    def __init__(self, api_key: str = "", country: str = "CN", timeout_ms: int = 45000) -> None:
+        self.api_key = api_key.strip()
+        self.country = country.strip() or "CN"
+        self.timeout_ms = max(5_000, min(timeout_ms, 120_000))
         self.endpoint = "https://api.firecrawl.dev/v2/search"
 
     @property

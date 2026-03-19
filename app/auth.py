@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import re
@@ -11,7 +12,7 @@ from app.database import LocalDatabase
 
 SESSION_COOKIE_NAME = "canvas_session"
 SESSION_DAYS = 14
-PASSWORD_ITERATIONS = 240_000
+PASSWORD_ITERATIONS = 100_000
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
 
 
@@ -27,7 +28,7 @@ class AuthManager:
         normalized = self._normalize_username(username)
         self._validate_password(password)
         salt = secrets.token_hex(16)
-        password_hash = self._hash_password(password, salt)
+        password_hash = await asyncio.to_thread(self._hash_password, password, salt)
         user_id = await self.database.create_user(normalized, password_hash, salt)
         if user_id is None:
             raise AuthError("用户名已存在。")
@@ -40,7 +41,7 @@ class AuthManager:
         user = await self.database.get_user_by_username(normalized)
         if not user:
             raise AuthError("用户名或密码错误。")
-        expected = self._hash_password(password, user["password_salt"])
+        expected = await asyncio.to_thread(self._hash_password, password, user["password_salt"])
         if not hmac.compare_digest(expected, user["password_hash"]):
             raise AuthError("用户名或密码错误。")
         user_id = int(user["id"])

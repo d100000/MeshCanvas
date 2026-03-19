@@ -13,9 +13,17 @@ function setSubmitting(form, isSubmitting) {
   const button = form.querySelector('button[type="submit"]');
   if (!button) return;
   button.disabled = isSubmitting;
-  button.textContent = isSubmitting
-    ? (form.dataset.authPanel === 'login' ? '登录中...' : '注册中...')
-    : (form.dataset.authPanel === 'login' ? '登录' : '注册并进入');
+  if (isSubmitting) {
+    const label = form.dataset.authPanel === 'login' ? '登录中' : '注册中';
+    button.innerHTML = `<span class="auth-spinner"></span>${label}`;
+    button.classList.add('loading');
+  } else {
+    button.textContent = form.dataset.authPanel === 'login' ? '登录' : '注册并进入';
+    button.classList.remove('loading');
+  }
+  for (const input of form.querySelectorAll('input')) {
+    input.readOnly = isSubmitting;
+  }
 }
 
 function switchTab(name) {
@@ -40,7 +48,7 @@ async function submitAuth(form, endpoint) {
   }
 
   setSubmitting(form, true);
-  setMessage('处理中...', 'pending');
+  setMessage('');
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -50,15 +58,21 @@ async function submitAuth(form, endpoint) {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
+      setSubmitting(form, false);
       setMessage(payload.detail || '操作失败，请稍后重试。', 'error');
       return;
     }
-    setMessage('成功，正在进入画布...', 'success');
+    const button = form.querySelector('button[type="submit"]');
+    if (button) {
+      button.innerHTML = '<span class="auth-check">✓</span>进入画布';
+      button.classList.remove('loading');
+      button.classList.add('success');
+    }
+    setMessage('');
     window.location.href = '/';
   } catch {
-    setMessage('网络异常，请稍后重试。', 'error');
-  } finally {
     setSubmitting(form, false);
+    setMessage('网络异常，请稍后重试。', 'error');
   }
 }
 

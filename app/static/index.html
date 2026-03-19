@@ -37,6 +37,7 @@
           <span id="status" class="status">连接中...</span>
           <button id="fitBtn" type="button" class="tool-btn">回到当前对话</button>
           <button id="clearBtn" type="button" class="tool-btn">清空画布</button>
+          <a href="/settings" class="tool-btn" id="settingsBtn">设置</a>
           <button id="logoutBtn" type="button" class="tool-btn">退出登录</button>
         </div>
       </header>
@@ -51,6 +52,10 @@
             <button id="selectionContinueBtn" type="button" class="small-btn">继续对话</button>
             <button id="selectionBranchBtn" type="button" class="small-btn">建立分支</button>
             <button id="selectionClearBtn" type="button" class="small-btn">清除选择</button>
+          </div>
+          <div id="needsSetupBanner" class="needs-setup-banner hidden">
+            <span>尚未配置 API 连接信息，无法使用对话功能。</span>
+            <a href="/settings" class="small-btn">前往设置</a>
           </div>
           <div class="canvas-tip hidden">按住空格 + 鼠标左键可移动画布；普通左键用于框选、点击与拖动卡片。</div>
           <aside id="minimap" class="minimap">
