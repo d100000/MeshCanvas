@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登录 · 无限画布多模型聊天室</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body class="auth-body">
+    <main class="auth-shell">
+      <section class="auth-card">
+        <div class="auth-brand">
+          <span class="auth-badge">Secure Access</span>
+          <h1>无限画布多模型聊天室</h1>
+          <p>先登录或注册，再进入多模型协作画布。</p>
+        </div>
+
+        <div class="auth-tabs" role="tablist" aria-label="登录或注册">
+          <button type="button" class="auth-tab active" data-auth-tab="login" aria-selected="true">登录</button>
+          <button type="button" class="auth-tab" data-auth-tab="register" aria-selected="false">注册</button>
+        </div>
+
+        <section class="auth-panel-shell">
+          <form id="loginForm" class="auth-form" data-auth-panel="login">
+            <label class="auth-field">
+              <span>用户名</span>
+              <input name="username" type="text" autocomplete="username" maxlength="32" required />
+            </label>
+            <label class="auth-field">
+              <span>密码</span>
+              <input name="password" type="password" autocomplete="current-password" maxlength="128" required />
+            </label>
+            <button type="submit" class="primary-btn auth-submit">登录</button>
+          </form>
+
+          <form id="registerForm" class="auth-form hidden" data-auth-panel="register">
+            <label class="auth-field">
+              <span>用户名</span>
+              <input name="username" type="text" autocomplete="username" maxlength="32" required />
+            </label>
+            <label class="auth-field">
+              <span>密码</span>
+              <input name="password" type="password" autocomplete="new-password" maxlength="128" required />
+            </label>
+            <button type="submit" class="primary-btn auth-submit">注册并进入</button>
+          </form>
+        </section>
+
+        <div id="authMessage" class="auth-message" aria-live="polite"></div>
+        <p class="auth-note">用户名支持字母、数字、点、下划线和短横线；密码至少 8 位。</p>
+      </section>
+    </main>
+    <script src="/static/auth.js"></script>
+  </body>
+</html>

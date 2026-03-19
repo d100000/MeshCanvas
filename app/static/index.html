@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>无限画布多模型聊天室</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1>无限画布多模型聊天室</h1>
+          <p>联网搜索、多模型讨论、分支延展都在同一张画布里完成</p>
+        </div>
+
+        <div class="canvas-switcher">
+          <button id="canvasMenuBtn" type="button" class="canvas-menu-btn" title="切换画布">
+            <span class="canvas-menu-icon">▣</span>
+            <span id="currentCanvasName">加载中...</span>
+            <span class="canvas-chevron">▾</span>
+          </button>
+          <div id="canvasDropdown" class="canvas-dropdown hidden">
+            <div id="canvasList" class="canvas-list"></div>
+            <div class="canvas-dropdown-footer">
+              <button id="newCanvasBtn" type="button" class="canvas-new-btn">＋ 新建画布</button>
+            </div>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="zoom-tools">
+            <button id="zoomOutBtn" type="button" class="tool-btn" title="缩小">－</button>
+            <button id="zoomResetBtn" type="button" class="tool-btn zoom-pill" title="重置缩放">100%</button>
+            <button id="zoomInBtn" type="button" class="tool-btn" title="放大">＋</button>
+          </div>
+          <span id="modelCount" class="muted"></span>
+          <span id="status" class="status">连接中...</span>
+          <button id="fitBtn" type="button" class="tool-btn">回到当前对话</button>
+          <button id="clearBtn" type="button" class="tool-btn">清空画布</button>
+          <button id="logoutBtn" type="button" class="tool-btn">退出登录</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <div id="canvasViewport" class="canvas-viewport">
+          <div class="canvas-grid"></div>
+          <svg id="edgeLayer" class="edge-layer" aria-hidden="true"></svg>
+          <div id="canvasStage" class="canvas-stage"></div>
+          <div id="selectionBox" class="selection-box hidden"><span id="selectionCount" class="selection-count hidden"></span></div>
+          <div id="selectionActions" class="selection-actions hidden">
+            <button id="selectionContinueBtn" type="button" class="small-btn">继续对话</button>
+            <button id="selectionBranchBtn" type="button" class="small-btn">建立分支</button>
+            <button id="selectionClearBtn" type="button" class="small-btn">清除选择</button>
+          </div>
+          <div class="canvas-tip hidden">按住空格 + 鼠标左键可移动画布；普通左键用于框选、点击与拖动卡片。</div>
+          <aside id="minimap" class="minimap">
+            <div class="minimap-title">Map</div>
+            <div id="minimapContent" class="minimap-content">
+              <div id="minimapNodes" class="minimap-nodes"></div>
+              <div id="minimapViewport" class="minimap-viewport"></div>
+            </div>
+          </aside>
+        </div>
+      </main>
+
+      <footer class="composer-shell">
+        <div class="composer-meta compact-meta">
+          <div class="compact-controls">
+            <label class="control inline-control">
+              <span>讨论轮数</span>
+              <select id="discussionRounds">
+                <option value="1">1 轮</option>
+                <option value="2" selected>2 轮</option>
+                <option value="3">3 轮</option>
+                <option value="4">4 轮</option>
+              </select>
+            </label>
+            <label class="toggle-pill">
+              <input id="searchToggle" type="checkbox" checked />
+              <span>联网</span>
+            </label>
+            <label class="toggle-pill">
+              <input id="thinkToggle" type="checkbox" />
+              <span>思考</span>
+            </label>
+          </div>
+          <div class="composer-meta-right">
+            <span id="composerMode" class="mode-pill">普通提问</span>
+            <span id="saveStatus" class="save-status hidden"></span>
+            <span id="roundHint" class="muted">联网默认开启；思考开启后会更注重验证与分析。</span>
+          </div>
+        </div>
+        <div id="selectedChips" class="selected-chips hidden"></div>
+        <section id="selectionSummary" class="selection-summary hidden">
+          <div class="selection-summary-head">
+            <span id="selectionSummaryCount" class="selection-summary-count">已圈选 0 个节点</span>
+            <span id="selectionSummaryModel" class="selection-summary-model">Kimi 总结</span>
+          </div>
+          <div id="selectionSummaryText" class="selection-summary-text"></div>
+        </section>
+        <div class="composer compact-composer">
+          <textarea id="messageInput" rows="1" placeholder="输入消息，Ctrl/Cmd + Enter 发送"></textarea>
+          <button id="sendBtn" type="button" class="primary-btn">发送</button>
+        </div>
+      </footer>
+    </div>
+
+    <script src="/static/markdown.js"></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

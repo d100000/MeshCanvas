@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multi-model-webchat"
+version = "0.1.0"
+description = "Local web chat that streams responses from multiple OpenAI-compatible models concurrently."
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "openai>=1.30.0",
+  "pydantic>=2.6",
+  "httpx>=0.27",
+  "python-dotenv>=1.0",
+]
+
+[tool.uvicorn]
+factory = false
+
+[tool.setuptools]
+packages = ["app"]
