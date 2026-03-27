@@ -90,7 +90,12 @@ class EventBus:
         self._write_logging(level=level, event_type=event_type, payload=payload)
         if self._db_callback is not None:
             try:
-                await self._db_callback(event_type, payload, request_id, client_id)
+                await self._db_callback(
+                    event_type=event_type,
+                    payload=payload,
+                    request_id=request_id,
+                    client_id=client_id,
+                )
             except Exception:
                 logger.warning("EventBus db_callback failed for %s", event_type, exc_info=True)
 
