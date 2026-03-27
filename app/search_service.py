@@ -54,7 +54,7 @@ class FirecrawlSearchService:
 
     async def search(self, query: str, think_enabled: bool = False, limit: int | None = None) -> SearchBundle:
         if not self.enabled:
-            raise RuntimeError("未配置 FIRECRAWL_API_KEY。")
+            return SearchBundle(query=query, items=[])  # 未配置时返回空结果，调用方无需关心
 
         search_limit = limit or (6 if think_enabled else 4)
         payload: dict[str, Any] = {
@@ -89,7 +89,7 @@ class FirecrawlSearchService:
             url = str(item.get("url") or "").strip()
             title = str(item.get("title") or item.get("metadata", {}).get("title") or url or "Untitled").strip()
             description = str(item.get("description") or item.get("snippet") or "").strip()
-            markdown = str(item.get("markdown") or "").strip()
+            markdown = str(item.get("markdown") or "")[:2000].strip()  # 截断过长摘录
             items.append(
                 SearchItem(
                     title=title,

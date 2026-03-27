@@ -3,75 +3,100 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>设置 · 无限画布多模型聊天室</title>
+    <title>账号与用量 · 无限画布多模型聊天室</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body class="auth-body">
-    <main class="auth-shell">
-      <section class="auth-card setup-card">
+    <main class="settings-shell">
+      <section class="settings-card">
         <div class="auth-brand">
-          <span class="auth-badge">Settings</span>
-          <h1>API 与搜索设置</h1>
-          <p>配置你自己的大模型 API 和联网搜索能力，仅对当前账号生效。</p>
+          <span class="auth-badge">账号</span>
+          <h1>账号与用量</h1>
+          <p id="accountInfo" class="settings-account-info">加载中…</p>
         </div>
 
-        <form id="settingsForm" class="setup-form">
-          <fieldset class="settings-group">
-            <legend>大模型 API</legend>
-            <label class="auth-field">
-              <span>API 地址</span>
-              <input name="api_base_url" type="url" placeholder="https://api.openai.com/v1" required />
-            </label>
-            <label class="auth-field">
-              <span>API 格式</span>
-              <select name="api_format">
-                <option value="openai" selected>OpenAI</option>
-                <option value="anthropic">Anthropic</option>
+        <div class="settings-summary-grid" id="usageSummary">
+          <div class="settings-stat-card">
+            <div class="settings-stat-label">今日消耗</div>
+            <div class="settings-stat-value" id="sumToday">--</div>
+            <div class="settings-stat-sub" id="sumTodayCount">-- 次调用</div>
+          </div>
+          <div class="settings-stat-card">
+            <div class="settings-stat-label">近 7 天</div>
+            <div class="settings-stat-value" id="sumWeek">--</div>
+            <div class="settings-stat-sub" id="sumWeekCount">-- 次调用</div>
+          </div>
+          <div class="settings-stat-card">
+            <div class="settings-stat-label">历史总量</div>
+            <div class="settings-stat-value" id="sumTotal">--</div>
+            <div class="settings-stat-sub" id="sumTotalCount">-- 次调用</div>
+          </div>
+          <div class="settings-stat-card">
+            <div class="settings-stat-label">当前余额</div>
+            <div class="settings-stat-value settings-balance" id="sumBalance">--</div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>用量明细</h3>
+          <div class="settings-table-wrap">
+            <table class="settings-table" id="usageTable">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>模型</th>
+                  <th>输入 tokens</th>
+                  <th>输出 tokens</th>
+                  <th>响应时间</th>
+                  <th>积分消耗</th>
+                </tr>
+              </thead>
+              <tbody id="usageTableBody">
+                <tr><td colspan="6" class="settings-muted">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>自定义 API Key</h3>
+          <div class="settings-key-notice">
+            <span>仅支持 bobdong.cn 站点的 Key</span>
+            <a href="https://bobdong.cn" target="_blank" rel="noreferrer" class="settings-key-link">前往获取 →</a>
+          </div>
+
+          <div class="settings-form-row">
+            <label class="settings-label">
+              <span>计费模式</span>
+              <select id="billingMode">
+                <option value="points">使用积分</option>
+                <option value="custom">使用自定义 API Key</option>
               </select>
             </label>
-            <label class="auth-field">
-              <span>API Key<span id="apiKeyHint" class="settings-key-hint"></span></span>
-              <input name="api_key" type="password" placeholder="留空则保持不变" />
-            </label>
-            <div class="setup-models-section">
-              <div class="setup-models-header">
-                <span>模型列表</span>
-                <button type="button" id="addModelBtn" class="small-btn">＋ 添加模型</button>
-              </div>
-              <div class="setup-model-labels">
-                <span>显示名称</span>
-                <span>模型 ID</span>
-                <span></span>
-              </div>
-              <div id="modelList" class="setup-model-list"></div>
-            </div>
-          </fieldset>
-
-          <fieldset class="settings-group">
-            <legend>联网搜索（Firecrawl）</legend>
-            <label class="auth-field">
-              <span>Firecrawl API Key<span id="fcKeyHint" class="settings-key-hint"></span></span>
-              <input name="firecrawl_api_key" type="password" placeholder="留空则保持不变；不填则禁用联网搜索" />
-            </label>
-            <div class="settings-row">
-              <label class="auth-field">
-                <span>国家代码</span>
-                <input name="firecrawl_country" type="text" value="CN" maxlength="4" />
-              </label>
-              <label class="auth-field">
-                <span>超时（毫秒）</span>
-                <input name="firecrawl_timeout_ms" type="number" value="45000" min="5000" max="120000" />
-              </label>
-            </div>
-          </fieldset>
-
-          <div class="settings-actions">
-            <a href="/" class="small-btn settings-back">← 返回画布</a>
-            <button type="submit" class="primary-btn auth-submit">保存设置</button>
           </div>
-        </form>
 
-        <div id="settingsMessage" class="auth-message" aria-live="polite"></div>
+          <div id="userApiInfo" class="settings-key-status"></div>
+
+          <div id="modelKeysSection" class="settings-model-keys hidden">
+            <h4>按模型配置 API Key</h4>
+            <div id="modelKeysList" class="settings-model-keys-list"></div>
+          </div>
+
+          <div class="settings-form-row">
+            <button id="saveCustomKeyBtn" class="small-btn primary-btn">保存设置</button>
+            <button id="clearCustomKeyBtn" class="small-btn">清除所有自定义 Key</button>
+          </div>
+          <div id="customKeyMsg" class="settings-msg"></div>
+          <p class="settings-hint">切换计费模式或保存 Key 后，需刷新画布页面才能生效。</p>
+        </div>
+
+        <div class="settings-readonly-note">
+          <p>大模型列表和联网搜索由管理员统一配置。如需调整，请联系管理员。</p>
+        </div>
+
+        <div class="settings-actions">
+          <a href="/" class="small-btn settings-back">← 返回画布</a>
+        </div>
       </section>
     </main>
     <script src="/static/settings.js"></script>

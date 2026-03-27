@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterable
 from time import perf_counter
 
@@ -10,10 +11,41 @@ from fastapi import WebSocket, WebSocketDisconnect
 from openai import AsyncOpenAI
 
 from app.database import LocalDatabase
-from app.request_logger import RequestLogger
+from app.request_logger import EventBus, RequestLogger
+
+logger = logging.getLogger(__name__)
 
 MODEL_STREAM_TIMEOUT_SECONDS = 70
 MAX_HISTORY_CHARS = 80_000
+MAX_AUTO_RETRIES = 2
+RETRY_BACKOFF_SECONDS = [2, 5]
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None)
+    if status and status in _RETRYABLE_STATUS_CODES:
+        return True
+    if isinstance(exc, (asyncio.TimeoutError, ConnectionError, OSError)):
+        return True
+    exc_name = type(exc).__name__
+    if any(k in exc_name for k in ("Timeout", "Connection", "ServiceUnavailable")):
+        return True
+    return False
+
+
+def _is_unsupported_usage_stream_option_error(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None)
+    if status != 400:
+        return False
+    msg = str(exc).lower()
+    return (
+        "stream_options" in msg
+        or "include_usage" in msg
+        or "unknown parameter" in msg
+        or "unrecognized request argument" in msg
+        or "extra fields not permitted" in msg
+    )
 
 
 class MultiModelChatService:
@@ -23,14 +55,17 @@ class MultiModelChatService:
         api_key: str,
         base_url: str,
         models: list[dict[str, str]],
-        request_logger: RequestLogger | None = None,
+        request_logger: EventBus | None = None,
         database: LocalDatabase | None = None,
+        extra_params: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         self.models = [m["name"] for m in models]
         self.model_id_map = {m["name"]: m["id"] for m in models}
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, default_headers=extra_headers or None)
         self.request_logger = request_logger or RequestLogger()
         self.database = database
+        self.extra_params = extra_params or {}
         self._send_lock = asyncio.Lock()
 
     async def stream_round(
@@ -48,7 +83,12 @@ class MultiModelChatService:
 
         for round_number in range(1, discussion_rounds + 1):
             if round_number > 1:
-                self._append_discussion_prompts(histories, round_inputs, round_number)
+                self._append_discussion_prompts(
+                    histories,
+                    round_inputs,
+                    round_number,
+                    discussion_rounds,
+                )
 
             await self._send_event(
                 websocket,
@@ -121,38 +161,29 @@ class MultiModelChatService:
             },
         )
 
-        try:
-            full_text = await asyncio.wait_for(
-                self._collect_model_stream(
-                    model=model,
-                    history=history,
-                    websocket=websocket,
-                    request_id=request_id,
-                    round_number=round_number,
-                    total_rounds=total_rounds,
-                ),
-                timeout=MODEL_STREAM_TIMEOUT_SECONDS,
-            )
+        last_error: Exception | None = None
+        for attempt in range(1 + MAX_AUTO_RETRIES):
+            try:
+                full_text, usage = await asyncio.wait_for(
+                    self._collect_model_stream(
+                        model=model,
+                        history=history,
+                        websocket=websocket,
+                        request_id=request_id,
+                        round_number=round_number,
+                        total_rounds=total_rounds,
+                    ),
+                    timeout=MODEL_STREAM_TIMEOUT_SECONDS,
+                )
+                if not full_text:
+                    full_text = "[模型未返回文本内容]"
 
-            if not full_text:
-                full_text = "[模型未返回文本内容]"
-
-            history.append({"role": "assistant", "content": full_text})
-            duration_ms = round((perf_counter() - started_at) * 1000, 2)
-            result = {
-                "type": "model_result",
-                "status": "success",
-                "request_id": request_id,
-                "client_id": client_id,
-                "model": model,
-                "round": round_number,
-                "duration_ms": duration_ms,
-                "response_length": len(full_text),
-                "history_size": len(history),
-                "content": full_text,
-            }
-            await self.request_logger.log_event(
-                {
+                history.append({"role": "assistant", "content": full_text})
+                duration_ms = round((perf_counter() - started_at) * 1000, 2)
+                prompt_tokens = usage["prompt_tokens"] if usage else 0
+                completion_tokens = usage["completion_tokens"] if usage else 0
+                total_tokens = usage["total_tokens"] if usage else 0
+                result = {
                     "type": "model_result",
                     "status": "success",
                     "request_id": request_id,
@@ -162,77 +193,134 @@ class MultiModelChatService:
                     "duration_ms": duration_ms,
                     "response_length": len(full_text),
                     "history_size": len(history),
-                    "user_message": user_message,
-                }
-            )
-            if self.database is not None:
-                await self.database.record_model_result(
-                    request_id=request_id,
-                    model=model,
-                    round_number=round_number,
-                    status="success",
-                    content=full_text,
-                    duration_ms=duration_ms,
-                    response_length=len(full_text),
-                )
-            await self._send_event(
-                websocket,
-                {
-                    "type": "done",
-                    "request_id": request_id,
-                    "model": model,
-                    "round": round_number,
-                    "total_rounds": total_rounds,
                     "content": full_text,
-                },
-            )
-            return result
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            if history and history[-1]["role"] == "user":
-                history.pop()
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                }
+                if attempt > 0:
+                    logger.info("model_retry_success model=%s attempt=%d request_id=%s", model, attempt + 1, request_id)
+                await self.request_logger.log_event(
+                    {
+                        "type": "model_result",
+                        "status": "success",
+                        "request_id": request_id,
+                        "client_id": client_id,
+                        "model": model,
+                        "round": round_number,
+                        "duration_ms": duration_ms,
+                        "response_length": len(full_text),
+                        "history_size": len(history),
+                        "user_message": user_message,
+                        "attempt": attempt + 1,
+                    }
+                )
+                if self.database is not None:
+                    await self.database.record_model_result(
+                        request_id=request_id,
+                        model=model,
+                        round_number=round_number,
+                        status="success",
+                        content=full_text,
+                        duration_ms=duration_ms,
+                        response_length=len(full_text),
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    )
+                await self._send_event(
+                    websocket,
+                    {
+                        "type": "done",
+                        "request_id": request_id,
+                        "model": model,
+                        "round": round_number,
+                        "total_rounds": total_rounds,
+                        "content": full_text,
+                    },
+                )
+                return result
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                if attempt < MAX_AUTO_RETRIES and _is_retryable_error(exc):
+                    backoff = RETRY_BACKOFF_SECONDS[min(attempt, len(RETRY_BACKOFF_SECONDS) - 1)]
+                    logger.warning(
+                        "model_retry model=%s attempt=%d/%d backoff=%ds error=%s request_id=%s",
+                        model, attempt + 1, 1 + MAX_AUTO_RETRIES, backoff,
+                        type(exc).__name__, request_id,
+                    )
+                    await self.request_logger.log_event(
+                        {
+                            "type": "model_retry",
+                            "request_id": request_id,
+                            "client_id": client_id,
+                            "model": model,
+                            "round": round_number,
+                            "attempt": attempt + 1,
+                            "max_attempts": 1 + MAX_AUTO_RETRIES,
+                            "error": str(exc)[:200],
+                            "error_type": type(exc).__name__,
+                            "backoff_s": backoff,
+                        }
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                break
 
-            duration_ms = round((perf_counter() - started_at) * 1000, 2)
-            error_text = "模型超时未完成回复。" if isinstance(exc, asyncio.TimeoutError) else str(exc)
-            result = {
-                "type": "model_result",
-                "status": "error",
+        duration_ms = round((perf_counter() - started_at) * 1000, 2)
+        exc = last_error
+        if isinstance(exc, asyncio.TimeoutError):
+            error_text = "模型超时未完成回复。"
+        else:
+            error_text_raw = str(exc) if exc else "未知错误"
+            if len(error_text_raw) > 200:
+                error_text_raw = error_text_raw[:200] + "…"
+            error_text = f"模型调用失败：{error_text_raw}"
+        result = {
+            "type": "model_result",
+            "status": "error",
+            "request_id": request_id,
+            "client_id": client_id,
+            "model": model,
+            "round": round_number,
+            "duration_ms": duration_ms,
+            "error": error_text,
+            "history_size": len(history),
+            "attempts": MAX_AUTO_RETRIES + 1,
+        }
+        logger.warning(
+            "model_failed_after_retries model=%s attempts=%d request_id=%s error=%s",
+            model, MAX_AUTO_RETRIES + 1, request_id, error_text,
+        )
+        await self.request_logger.log_event(
+            {
+                **result,
+                "user_message": user_message,
+                "error_type": type(exc).__name__ if exc else "unknown",
+            }
+        )
+        if self.database is not None:
+            await self.database.record_model_result(
+                request_id=request_id,
+                model=model,
+                round_number=round_number,
+                status="error",
+                error_text=error_text,
+                duration_ms=duration_ms,
+            )
+        await self._send_event(
+            websocket,
+            {
+                "type": "error",
                 "request_id": request_id,
-                "client_id": client_id,
                 "model": model,
                 "round": round_number,
-                "duration_ms": duration_ms,
-                "error": error_text,
-                "history_size": len(history),
-            }
-            await self.request_logger.log_event(
-                {
-                    **result,
-                    "user_message": user_message,
-                }
-            )
-            if self.database is not None:
-                await self.database.record_model_result(
-                    request_id=request_id,
-                    model=model,
-                    round_number=round_number,
-                    status="error",
-                    error_text=error_text,
-                    duration_ms=duration_ms,
-                )
-            await self._send_event(
-                websocket,
-                {
-                    "type": "error",
-                    "request_id": request_id,
-                    "model": model,
-                    "round": round_number,
-                    "total_rounds": total_rounds,
-                    "content": error_text,
-                },
-            )
-            return result
+                "total_rounds": total_rounds,
+                "content": error_text,
+            },
+        )
+        return result
 
     async def _collect_model_stream(
         self,
@@ -242,39 +330,71 @@ class MultiModelChatService:
         request_id: str,
         round_number: int,
         total_rounds: int,
-    ) -> str:
+    ) -> tuple[str, dict[str, int] | None]:
         chunks: list[str] = []
+        usage: dict[str, int] | None = None
         trimmed_history = self._trim_history(history)
         api_model_id = self.model_id_map.get(model, model)
-        stream = await self.client.chat.completions.create(
-            model=api_model_id,
-            messages=trimmed_history,
-            stream=True,
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": api_model_id,
+            "messages": trimmed_history,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if self.extra_params:
+            create_kwargs.update(self.extra_params)
+        try:
+            stream = await self.client.chat.completions.create(**create_kwargs)
+        except Exception as exc:
+            # Some OpenAI-compatible services reject stream_options/include_usage.
+            if (
+                create_kwargs.get("stream_options")
+                and _is_unsupported_usage_stream_option_error(exc)
+            ):
+                logger.info(
+                    "model_stream_usage_fallback model=%s reason=%s",
+                    model,
+                    type(exc).__name__,
+                )
+                create_kwargs.pop("stream_options", None)
+                stream = await self.client.chat.completions.create(**create_kwargs)
+            else:
+                raise
 
         async for chunk in stream:
             delta_text = self._extract_delta_text(chunk)
-            if not delta_text:
-                continue
-            chunks.append(delta_text)
-            await self._send_event(
-                websocket,
-                {
-                    "type": "delta",
-                    "request_id": request_id,
-                    "model": model,
-                    "round": round_number,
-                    "total_rounds": total_rounds,
-                    "content": delta_text,
-                },
-            )
-        return "".join(chunks)
+            if delta_text:
+                chunks.append(delta_text)
+                await self._send_event(
+                    websocket,
+                    {
+                        "type": "delta",
+                        "request_id": request_id,
+                        "model": model,
+                        "round": round_number,
+                        "total_rounds": total_rounds,
+                        "content": delta_text,
+                    },
+                )
+            chunk_usage = getattr(chunk, "usage", None)
+            if chunk_usage:
+                usage = {
+                    "prompt_tokens": getattr(chunk_usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(chunk_usage, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(chunk_usage, "total_tokens", 0) or 0,
+                }
+        return "".join(chunks), usage
 
     async def _send_event(self, websocket: WebSocket, payload: dict[str, Any]) -> None:
         async with self._send_lock:
             try:
                 await websocket.send_json(payload)
-            except (WebSocketDisconnect, RuntimeError):
+            except asyncio.CancelledError:
+                raise
+            except (WebSocketDisconnect, RuntimeError, OSError):
+                return
+            except Exception:
+                logger.debug("_send_event unexpected error", exc_info=True)
                 return
 
     def _append_discussion_prompts(
@@ -282,6 +402,7 @@ class MultiModelChatService:
         histories: dict[str, list[dict[str, str]]],
         round_inputs: dict[str, str],
         round_number: int,
+        total_rounds: int,
     ) -> None:
         for model, history in histories.items():
             history.append(
@@ -291,6 +412,7 @@ class MultiModelChatService:
                         current_model=model,
                         round_inputs=round_inputs,
                         round_number=round_number,
+                        total_rounds=total_rounds,
                     ),
                 }
             )
@@ -300,7 +422,9 @@ class MultiModelChatService:
         current_model: str,
         round_inputs: dict[str, str],
         round_number: int,
+        total_rounds: int,
     ) -> str:
+        is_final_round = round_number >= total_rounds
         peer_sections: list[str] = []
         for model, content in round_inputs.items():
             if model == current_model:
@@ -311,12 +435,28 @@ class MultiModelChatService:
             peer_sections.append(f"{model}:\n{cleaned}")
 
         if not peer_sections:
+            if is_final_round:
+                return (
+                    f"现在进入第 {round_number}/{total_rounds} 轮（最终轮）。"
+                    "请基于前几轮内容给出你的最终结论版回答，"
+                    "要求直接回应用户问题，保留核心依据与建议，避免重复过程描述。"
+                )
             return (
                 f"现在进入第 {round_number} 轮讨论。请继续完善你刚才的观点，"
                 "补充最关键的事实、风险或建议，避免重复。"
             )
 
         peers_text = "\n\n".join(peer_sections)
+        if is_final_round:
+            return (
+                f"现在进入第 {round_number}/{total_rounds} 轮多人讨论（最终轮）。以下是其他模型刚刚的观点：\n\n"
+                f"{peers_text}\n\n"
+                "请输出你的最终结论版回答：\n"
+                "1. 必须直接回答用户原始问题；\n"
+                "2. 综合前几轮讨论，保留关键依据、风险与建议；\n"
+                "3. 可标注与你他人观点的一致点/分歧点，但避免展开冗长过程；\n"
+                "4. 内容要完整且可执行。"
+            )
         return (
             f"现在进入第 {round_number} 轮多人讨论。以下是其他模型刚刚的观点：\n\n"
             f"{peers_text}\n\n"
@@ -329,6 +469,12 @@ class MultiModelChatService:
 
     @staticmethod
     def _trim_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
+        """按字符数裁剪历史（上限 MAX_HISTORY_CHARS）。
+
+        注意：字符数与 token 数不等价，中文字符约 1 token/字，英文约 4 字符/token。
+        当前设定的 80_000 字符对纯中文内容约为 80k token，请确认目标模型的上下文窗口
+        足够大（如 gpt-4o 支持 128k token）；对上下文较短的模型可酌情降低该常量。
+        """
         total = sum(len(m.get("content", "")) for m in history)
         if total <= MAX_HISTORY_CHARS:
             return history

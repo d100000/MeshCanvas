@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>管理后台 · 无限画布多模型聊天室</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/admin/admin.css?v=20260320-cspfix2" />
+</head>
+<body>
+  <div class="admin-shell">
+    <header class="admin-topbar">
+      <h1>管理后台</h1>
+      <div class="admin-topbar-right">
+        <a href="/" class="tool-btn">用户端</a>
+        <button id="adminLogoutBtn" class="tool-btn">退出</button>
+      </div>
+    </header>
+
+    <nav class="admin-tabs">
+      <button class="admin-tab active" data-tab="users">用户管理</button>
+      <button class="admin-tab" data-tab="model-config">模型配置</button>
+      <button class="admin-tab" data-tab="pricing">模型定价</button>
+      <button class="admin-tab" data-tab="usage">用量统计</button>
+      <button class="admin-tab" data-tab="config">系统配置</button>
+      <button class="admin-tab" data-tab="audit">操作日志</button>
+    </nav>
+
+    <main class="admin-content">
+      <!-- Users panel -->
+      <section id="panel-users" class="admin-panel active">
+        <div class="admin-card">
+          <h3>用户列表</h3>
+          <p class="admin-card-hint">在「操作」列点击 <strong>调积分</strong>，可在该行下方展开表单（正数充值、负数扣减）。</p>
+          <table class="admin-table">
+            <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>余额</th><th>累计充值</th><th>累计消耗</th><th>注册时间</th><th>操作</th></tr></thead>
+            <tbody id="userTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Model Config panel -->
+      <section id="panel-model-config" class="admin-panel">
+        <div class="admin-card">
+          <h3>大模型 API</h3>
+          <p class="admin-card-hint">配置全局 API，所有用户共享此连接。API Key 留空则保持不变。</p>
+          <div class="admin-form-row">
+            <label>API 地址<input id="mcApiBase" class="mc-api-base-input" type="text" placeholder="https://api.openai.com/v1" /></label>
+            <label>格式
+              <select id="mcApiFormat">
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+              </select>
+            </label>
+          </div>
+          <div class="admin-form-row">
+            <label>API Key<span id="mcApiKeyHint" class="admin-key-hint"></span><input id="mcApiKey" class="mc-secret-input" type="password" placeholder="留空则保持不变" /></label>
+          </div>
+          <div class="admin-form-row">
+            <label>预处理模型
+              <select id="mcPreprocessModel">
+                <option value="">不启用</option>
+              </select>
+            </label>
+            <span class="admin-card-hint">指定后，用户发送消息时将由该模型先分析是否需要联网搜索、提炼关键词并整理结果。</span>
+          </div>
+          <div class="admin-form-row">
+            <label>请求额外参数（JSON）
+              <textarea id="mcExtraParams" class="mc-extra-params-input" rows="3" placeholder='{"temperature": 0.7, "top_p": 0.9}'></textarea>
+            </label>
+            <span class="admin-card-hint">已有参数会被替换，未配置的参数保持不变。留空则不传额外参数。</span>
+          </div>
+          <div class="admin-form-row">
+            <label>请求头覆盖（JSON）
+              <textarea id="mcExtraHeaders" class="mc-extra-params-input" rows="4" placeholder='{"HTTP-Referer": "https://example.com", "X-Title": "My App"}'></textarea>
+            </label>
+            <span class="admin-card-hint">用于覆盖或新增发往大模型网关的请求头。不会保存 `Content-Type` / `Host` / `Content-Length`。</span>
+          </div>
+          <div class="admin-card admin-subcard">
+            <div class="admin-models-header">
+              <span class="admin-subtitle">模型列表</span>
+              <button type="button" id="mcAddModelBtn" class="admin-btn admin-btn-sm">＋ 添加</button>
+            </div>
+            <div class="admin-models-labels">
+              <span>显示名称</span><span>模型 ID</span><span>操作</span>
+            </div>
+            <div id="mcModelList" class="admin-model-list"></div>
+          </div>
+        </div>
+        <div class="admin-card">
+          <h3>用户自定义 API</h3>
+          <p class="admin-card-hint">用户选择"使用自定义 Key"时，请求将走此处配置的 API 地址和格式。与上方全局 API 完全隔离。</p>
+          <div class="admin-form-row">
+            <label>用户 API 地址<input id="mcUserApiBase" class="mc-api-base-input" type="text" placeholder="https://api.bobdong.cn/v1" /></label>
+            <label>格式
+              <select id="mcUserApiFormat">
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="admin-card">
+          <h3>联网搜索（Firecrawl）</h3>
+          <p class="admin-card-hint">留空 Firecrawl Key 则禁用联网搜索。</p>
+          <div class="admin-form-row">
+            <label>Firecrawl Key<span id="mcFcKeyHint" class="admin-key-hint"></span><input id="mcFcKey" class="mc-secret-input" type="password" placeholder="留空则保持不变" /></label>
+          </div>
+          <div class="admin-form-row">
+            <label>国家代码<input id="mcFcCountry" type="text" maxlength="4" value="CN" /></label>
+            <label>超时（毫秒）<input id="mcFcTimeout" type="number" min="5000" max="120000" value="45000" /></label>
+          </div>
+          <div class="admin-form-row mc-save-row">
+            <button id="mcSaveBtn" class="admin-btn primary">保存配置</button>
+          </div>
+          <div id="mcMsg" class="admin-msg"></div>
+        </div>
+      </section>
+
+      <!-- Pricing panel -->
+      <section id="panel-pricing" class="admin-panel">
+        <div class="admin-card">
+          <h3>模型定价</h3>
+          <p class="admin-card-hint">来自「模型配置」的模型列表；点 <strong>设定单价</strong> 可快速填充下方表单并保存。未出现在列表中的模型请先到「模型配置」Tab 添加。</p>
+          <table class="admin-table" id="pricingQuickTable">
+            <thead><tr><th>模型（显示名）</th><th>模型 ID</th><th>当前输入单价</th><th>当前输出单价</th><th>状态</th><th>操作</th></tr></thead>
+            <tbody id="pricingQuickBody"><tr><td colspan="6" class="admin-msg">加载中…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="admin-card">
+          <h3>手动添加 / 修改定价</h3>
+          <p class="admin-card-hint">也可直接填写任意模型 ID 手动保存，无需出现在上方列表中。</p>
+          <div class="admin-form-row">
+            <label>模型 ID<input id="priceModelId" type="text" placeholder="model-id" /></label>
+            <label>显示名称<input id="priceDisplayName" type="text" placeholder="GPT-5" /></label>
+            <label>输入单价<input id="priceInput" type="number" step="0.01" value="1" /></label>
+            <label>输出单价<input id="priceOutput" type="number" step="0.01" value="2" /></label>
+            <button id="priceSaveBtn" class="admin-btn primary">保存</button>
+          </div>
+          <div id="priceMsg" class="admin-msg"></div>
+        </div>
+      </section>
+
+      <!-- Usage panel -->
+      <section id="panel-usage" class="admin-panel">
+        <div class="admin-card">
+          <h3>用量统计</h3>
+          <div class="admin-form-row">
+            <label>按用户筛选<input id="usageUserId" type="number" placeholder="留空=全部" /></label>
+            <button id="usageRefreshBtn" class="admin-btn">查询</button>
+          </div>
+          <table class="admin-table">
+            <thead><tr><th>模型</th><th>调用次数</th><th>输入 tokens</th><th>输出 tokens</th><th>总 tokens</th><th>消耗点数</th></tr></thead>
+            <tbody id="usageTableBody"></tbody>
+          </table>
+        </div>
+        <div class="admin-card">
+          <h3>积分变动记录</h3>
+          <table class="admin-table">
+            <thead><tr><th>时间</th><th>用户</th><th>操作人</th><th>点数</th><th>备注</th></tr></thead>
+            <tbody id="rechargeLogBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Config panel -->
+      <section id="panel-config" class="admin-panel">
+        <div class="admin-card">
+          <h3>系统配置</h3>
+          <div class="admin-form-row">
+            <label>新用户赠送点数<input id="cfgDefaultPoints" type="number" step="1" /></label>
+            <label>低余额提醒阈值<input id="cfgLowThreshold" type="number" step="1" /></label>
+          </div>
+          <div class="admin-form-row">
+            <label>每次搜索消耗点数<input id="cfgSearchPoints" type="number" step="0.1" /></label>
+            <label>允许注册
+              <select id="cfgAllowReg">
+                <option value="true">是</option>
+                <option value="false">否</option>
+              </select>
+            </label>
+            <button id="cfgSaveBtn" class="admin-btn primary">保存配置</button>
+          </div>
+          <div id="cfgMsg" class="admin-msg"></div>
+        </div>
+      </section>
+
+      <!-- Audit log panel -->
+      <section id="panel-audit" class="admin-panel">
+        <div class="admin-card">
+          <h3>管理员操作日志</h3>
+          <p class="admin-card-hint">记录充值/扣减、角色变更、定价修改、系统配置变更等操作，最近 200 条。</p>
+          <div class="admin-form-row">
+            <label>按操作类型筛选
+              <select id="auditActionFilter">
+                <option value="">全部</option>
+                <option value="recharge">积分调整</option>
+                <option value="set_role">角色变更</option>
+                <option value="reset_password">重置密码</option>
+                <option value="upsert_pricing">更新定价</option>
+                <option value="delete_pricing">删除定价</option>
+                <option value="update_config">修改配置</option>
+                <option value="test_model_connectivity">模型连通性测试</option>
+              </select>
+            </label>
+            <button id="auditRefreshBtn" class="admin-btn">刷新</button>
+          </div>
+          <table class="admin-table">
+            <thead><tr><th>时间</th><th>操作人</th><th>操作</th><th>目标用户</th><th>详情</th></tr></thead>
+            <tbody id="auditTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/admin/admin.js?v=20260320-cspfix2"></script>
+</body>
+</html>

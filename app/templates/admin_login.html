@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>管理后台 · 无限画布多模型聊天室</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/admin/admin.css" />
+</head>
+<body class="auth-body">
+  <main class="auth-shell">
+    <section class="auth-card">
+      <div class="auth-brand">
+        <span class="auth-badge admin-badge">Admin</span>
+        <h1>管理后台</h1>
+        <p>请使用管理员账号登录。默认账号一般为 <strong>admin</strong> / <strong>admin</strong>（注意拼写）。</p>
+      </div>
+      <!-- 使用原生 POST + 303 重定向，确保 Set-Cookie 与跳转在同一浏览导航中完成 -->
+      <form id="adminLoginForm" class="auth-form" method="post" action="/admin/session-login" autocomplete="on">
+        <label class="auth-field">
+          <span>用户名</span>
+          <input name="username" type="text" autocomplete="username" required@@USERNAME_ATTR@@ />
+        </label>
+        <label class="auth-field">
+          <span>密码</span>
+          <input name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit" class="primary-btn auth-submit admin-submit">登录管理后台</button>
+      </form>
+      <div class="admin-login-callout" role="note">
+        <strong>登录后又立刻回到本页、且没有红字？</strong>
+        多半是浏览器没有保存 <code>admin_session</code>（HTTPS 反代需转发 <code>X-Forwarded-Proto</code>，且 uvicorn 加 <code>--forwarded-allow-ips='*'</code>）。
+        请试无痕窗口，并确认地址栏主机与登录时一致（勿混用 <code>127.0.0.1</code> 与 <code>localhost</code>）。
+      </div>
+      <div id="adminMessage" class="auth-message@@ADMIN_MSG_CLASS@@" aria-live="polite">@@ADMIN_MSG_BODY@@</div>
+      <p class="auth-note"><a href="/" class="auth-link">← 返回用户端</a></p>
+    </section>
+  </main>
+  <script src="/static/admin/login.js" defer></script>
+</body>
+</html>

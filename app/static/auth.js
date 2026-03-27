@@ -99,4 +99,4 @@ fetch('/api/auth/session', { credentials: 'same-origin' })
       window.location.href = '/';
     }
   })
-  .catch(() => {});
+  .catch((err) => { console.error('[auth] session check failed', err); });

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -50,36 +51,42 @@ def get_config_path() -> Path:
     return Path(os.getenv("MODELS_SETTING_PATH", "models_setting.json")).resolve()
 
 
-_is_configured_cache: bool | None = None
-
-
 def is_configured() -> bool:
-    global _is_configured_cache
-    if _is_configured_cache is True:
-        return True
+    """每次都从磁盘检查，不缓存 True——避免配置文件被删后仍认为已配置。
+
+    缓存 False 会导致删除文件后须重启才能再次通过 setup；
+    缓存 True 则更危险（配置丢失后系统继续运行出错）。
+    因此统一不缓存，依赖文件读取本身足够快。
+    """
     config_path = get_config_path()
     if not config_path.exists():
-        _is_configured_cache = False
         return False
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
         settings = ModelSettings.model_validate(data)
-        result = bool(settings.models and settings.api_key and settings.base_url)
-        _is_configured_cache = result
-        return result
+        return bool(settings.models and settings.api_key and settings.base_url)
     except Exception:
-        _is_configured_cache = False
         return False
 
 
 def save_settings(data: dict) -> Path:
-    global _is_configured_cache
+    """原子写入配置文件（写临时文件后 os.replace），避免并发或崩溃时损坏 JSON。"""
     config_path = get_config_path()
-    config_path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=config_path.parent, prefix=".tmp_settings_", suffix=".json"
     )
-    _is_configured_cache = None
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, config_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
     get_settings.cache_clear()
     return config_path
 

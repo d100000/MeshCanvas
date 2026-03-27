@@ -4,6 +4,8 @@ import asyncio
 import time
 from collections import defaultdict, deque
 
+_RATE_LIMITER_MAX_KEYS = 50_000
+
 
 class RateLimiter:
     def __init__(self) -> None:
@@ -18,6 +20,9 @@ class RateLimiter:
 
     def _allow_unlocked(self, key: str, limit: int, window_seconds: int) -> bool:
         now = time.monotonic()
+        is_new_key = key not in self._buckets
+        if is_new_key and len(self._buckets) >= _RATE_LIMITER_MAX_KEYS:
+            return False
         bucket = self._buckets[key]
         threshold = now - window_seconds
         while bucket and bucket[0] < threshold:
@@ -48,6 +53,7 @@ def build_security_headers() -> dict[str, str]:
             [
                 "default-src 'self'",
                 "img-src 'self' data:",
+                "media-src 'self' data:",
                 "style-src 'self'",
                 "script-src 'self'",
                 "connect-src 'self' ws: wss:",

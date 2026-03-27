@@ -10,7 +10,13 @@
 
   function sanitizeHref(url) {
     const value = String(url || '').trim();
-    if (/^(https?:|mailto:)/i.test(value) || value.startsWith('/') || value.startsWith('#')) {
+    if (/^https?:\/\//i.test(value) || /^mailto:/i.test(value)) {
+      return value.replaceAll('"', '%22');
+    }
+    if (value.startsWith('/') && !value.startsWith('//')) {
+      return value.replaceAll('"', '%22');
+    }
+    if (value.startsWith('#')) {
       return value.replaceAll('"', '%22');
     }
     return '#';
@@ -23,7 +29,7 @@
     value = value.replace(/\*([^*]+)\*/g, (_m, content) => `<em>${content}</em>`);
     value = value.replace(/\[([^\]]+)\]\(([^\s)]+)\)/g, (_m, label, url) => {
       const safeUrl = sanitizeHref(url);
-      return `<a href="${safeUrl}" target="_blank" rel="noreferrer">${label}</a>`;
+      return `<a href="${safeUrl}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`;
     });
     return value;
   }

@@ -4,11 +4,14 @@ const MODEL_NODE_WIDTH = 420;
 const USER_NODE_WIDTH = 500;
 const MODEL_NODE_HEIGHT = 700;
 const USER_NODE_HEIGHT = 300;
+const CONCLUSION_NODE_WIDTH = 520;
+const CONCLUSION_NODE_HEIGHT = 400;
 const CLUSTER_GAP_X = 36;
 const CLUSTER_GAP_Y = 54;
 const CLUSTER_PADDING = 56;
 const DEFAULT_SCALE = 0.2;
 const MAX_MESSAGE_LENGTH = 4000;
+const CONCLUSION_CONTEXT_MAX_CHARS = 3000;
 
 let _rafEdgesScheduled = false;
 let _rafMinimapScheduled = false;
@@ -76,9 +79,26 @@ const canvasListEl = document.getElementById('canvasList');
 const newCanvasBtn = document.getElementById('newCanvasBtn');
 
 let socket;
+const balanceDisplay = document.getElementById('balanceDisplay');
+
+function updateBalanceDisplay(balance) {
+  if (!balanceDisplay) return;
+  balanceDisplay.textContent = `${balance.toFixed(1)} 点`;
+  balanceDisplay.classList.toggle('low', balance <= 10);
+}
+
+function getSearchMode() {
+  const v = searchToggleEl.value;
+  if (v === 'auto') return 'auto';
+  return v === 'true';
+}
+
 let models = [];
 let socketConnected = false;
 let spacePressed = false;
+let latestConclusionMarkdown = '';
+let latestConclusionRequestId = '';
+let conclusionAutoAttach = true;
 let clusterCount = 0;
 let latestRequestId = null;
 let hoverNodeId = null;
@@ -491,7 +511,8 @@ function renderSelectedChips() {
   composerEl.classList.add('has-selection');
   selectedChipsEl.innerHTML = selection.map((node) => {
     const label = node.type === 'user' ? '用户提问' : getDisplayName(node.model);
-    return `<span class="selected-chip" data-node-id="${node.nodeId}">${escapeHtml(label)}<button type="button" class="chip-close" data-node-id="${node.nodeId}">✕</button></span>`;
+    const safeId = escapeAttribute(node.nodeId);
+    return `<span class="selected-chip" data-node-id="${safeId}">${escapeHtml(label)}<button type="button" class="chip-close" data-node-id="${safeId}">✕</button></span>`;
   }).join('') + '<button type="button" class="chips-clear">清除全部</button>';
 
   if (!_chipsDelegated) {
@@ -629,7 +650,7 @@ function cancelRequest(requestId) {
   if (!requestId || socket.readyState !== WebSocket.OPEN) return;
   const cluster = getCluster(requestId);
   if (!cluster || !cluster.isRunning || cluster.isCancelling) return;
-  socket.send(JSON.stringify({ action: 'cancel_request', request_id: requestId }));
+  try { socket.send(JSON.stringify({ action: 'cancel_request', request_id: requestId })); } catch (_e) { return; }
   setClusterState(requestId, { isCancelling: true, badgeText: '取消中...' });
 }
 
@@ -901,6 +922,36 @@ function replayCluster(req) {
     }
   }
 
+  const summary = req.summary;
+  if (summary && summary.status === 'success' && summary.summary_markdown) {
+    const conclusionNodeId = `conclusion-${request_id}`;
+    const modelNodes = cluster.modelNodeIds.map(id => nodes.get(id)).filter(Boolean);
+    let cx = layout.centerX - CONCLUSION_NODE_WIDTH / 2;
+    let cy = layout.modelY + MODEL_NODE_HEIGHT + 40;
+    if (modelNodes.length > 0) {
+      const lastModel = modelNodes[modelNodes.length - 1];
+      cy = lastModel.y + MODEL_NODE_HEIGHT + 40;
+    }
+    createConclusionNode({
+      nodeId: conclusionNodeId,
+      requestId: request_id,
+      x: cx,
+      y: cy,
+      model: summary.summary_model || '',
+      markdown: summary.summary_markdown,
+      status: 'success',
+    });
+    cluster.conclusionNodeId = conclusionNodeId;
+    addEdge({
+      id: `edge-user-${request_id}-${conclusionNodeId}`,
+      sourceId: `user-${request_id}`,
+      targetId: conclusionNodeId,
+      type: 'conclusion_edge',
+    });
+    latestConclusionMarkdown = summary.summary_markdown;
+    latestConclusionRequestId = request_id;
+  }
+
   updateClusterBounds(request_id);
   setClusterState(request_id, { isRunning: false, isCancelling: false, badgeText: '已完成' });
   renderEdges();
@@ -937,8 +988,12 @@ function connect() {
 
   socket.addEventListener('open', () => {
     socketConnected = true;
+    const wasReconnect = reconnectAttempts > 0;
     reconnectAttempts = 0;
     refreshStatus();
+    if (wasReconnect && currentCanvasId) {
+      loadCanvasState(currentCanvasId);
+    }
   });
 
   socket.addEventListener('close', (event) => {
@@ -958,7 +1013,13 @@ function connect() {
   });
 
   socket.addEventListener('message', (event) => {
-    const payload = JSON.parse(event.data);
+    let payload;
+    try {
+      payload = JSON.parse(event.data);
+    } catch (err) {
+      console.error('[ws] invalid JSON from server:', err, event.data?.slice?.(0, 200));
+      return;
+    }
     handleEvent(payload);
   });
 }
@@ -968,9 +1029,15 @@ function handleEvent(payload) {
     case 'meta':
       models = payload.models || [];
       modelCount.textContent = `${models.length} 个模型`;
+      const wasSearchDisabled = searchToggleEl.disabled;
       if (payload.search_available === false) {
-        searchToggleEl.checked = false;
+        searchToggleEl.value = 'false';
         searchToggleEl.disabled = true;
+      } else {
+        searchToggleEl.disabled = false;
+        if (wasSearchDisabled) {
+          searchToggleEl.value = payload.preprocess_available ? 'auto' : 'true';
+        }
       }
       {
         const banner = document.getElementById('needsSetupBanner');
@@ -978,8 +1045,19 @@ function handleEvent(payload) {
           banner.classList.toggle('hidden', !payload.needs_setup);
         }
         sendBtn.disabled = Boolean(payload.needs_setup);
+        if (typeof payload.balance === 'number') updateBalanceDisplay(payload.balance);
+        const pending = payload.pending_requests || [];
+        for (const rid of pending) {
+          const cluster = requestClusters.get(rid);
+          if (cluster) {
+            setClusterState(rid, { isRunning: true, isCancelling: false, badgeText: '后台运行中' });
+          }
+        }
       }
       refreshStatus();
+      break;
+    case 'usage':
+      if (typeof payload.balance === 'number') updateBalanceDisplay(payload.balance);
       break;
     case 'user':
       latestRequestId = payload.request_id;
@@ -1006,6 +1084,15 @@ function handleEvent(payload) {
     case 'search_complete':
     case 'search_error':
       queueOrApplySearchEvent(payload);
+      break;
+    case 'preprocess_start':
+      handlePreprocessStart(payload);
+      break;
+    case 'preprocess_result':
+      handlePreprocessResult(payload);
+      break;
+    case 'search_organized':
+      handleSearchOrganized(payload);
       break;
     case 'round_start':
       materializeClusterModels(payload.request_id);
@@ -1066,11 +1153,177 @@ function handleEvent(payload) {
       setClusterState(payload.request_id, { isRunning: false, isCancelling: false, badgeText: '已完成' });
       latestRequestId = payload.request_id || latestRequestId;
       break;
+    case 'conclusion_start':
+      handleConclusionStart(payload);
+      break;
+    case 'conclusion_done':
+      handleConclusionDone(payload);
+      break;
+    case 'conclusion_error':
+      handleConclusionError(payload);
+      break;
+    case 'conclusion_retry_queued':
+      setClusterState(payload.request_id, { isRunning: true, isCancelling: false, badgeText: '结论重试排队中' });
+      break;
     case 'cleared':
       clearCanvas();
       break;
     default:
       break;
+  }
+}
+
+function handlePreprocessStart(payload) {
+  const userNode = getUserNode(payload.request_id);
+  if (!userNode) return;
+  setClusterState(payload.request_id, {
+    isRunning: true,
+    isCancelling: false,
+    badgeText: `预处理分析中（${escapeHtml(getDisplayName(payload.model || ''))})`,
+  });
+  if (userNode.searchPanel) {
+    userNode.searchPanel.classList.remove('hidden');
+    if (userNode.searchQueryEl) userNode.searchQueryEl.textContent = '预处理模型分析中...';
+    if (userNode.searchBadgeEl) userNode.searchBadgeEl.textContent = '分析中';
+  }
+}
+
+function handlePreprocessResult(payload) {
+  const userNode = getUserNode(payload.request_id);
+  if (!userNode) return;
+  const needSearch = Boolean(payload.need_search);
+  const keywords = (payload.keywords || []).join(', ');
+  const reason = payload.reason || '';
+  if (userNode.searchQueryEl) {
+    userNode.searchQueryEl.textContent = needSearch
+      ? `需要搜索：${keywords}`
+      : `无需搜索${reason ? `（${reason}）` : ''}`;
+  }
+  if (userNode.searchBadgeEl) {
+    userNode.searchBadgeEl.textContent = needSearch ? '待搜索' : '已跳过';
+  }
+  if (!needSearch && userNode.searchPanel) {
+    setClusterState(payload.request_id, {
+      isRunning: true,
+      isCancelling: false,
+      badgeText: '排队执行',
+    });
+  }
+  updateClusterBounds(payload.request_id);
+  scheduleRenderEdges();
+  scheduleRenderMinimap();
+}
+
+function handleSearchOrganized(payload) {
+  const userNode = getUserNode(payload.request_id);
+  if (!userNode) return;
+  if (userNode.searchBadgeEl) userNode.searchBadgeEl.textContent = '已整理';
+  if (userNode.searchQueryEl) {
+    userNode.searchQueryEl.textContent = `搜索结果已由 ${escapeHtml(getDisplayName(payload.model || ''))} 整理`;
+  }
+  if (userNode.searchResultsEl && payload.organized_markdown) {
+    const rendered = window.renderMarkdown ? window.renderMarkdown(payload.organized_markdown) : escapeHtml(payload.organized_markdown);
+    userNode.searchResultsEl.innerHTML = `<div class="search-organized-content">${rendered}</div>`;
+  }
+  if (userNode.searchToggleBtn) userNode.searchToggleBtn.classList.remove('hidden');
+  updateClusterBounds(payload.request_id);
+  scheduleRenderEdges();
+  scheduleRenderMinimap();
+}
+
+function handleConclusionStart(payload) {
+  const cluster = requestClusters.get(payload.request_id);
+  if (!cluster) return;
+  const nodeId = `conclusion-${payload.request_id}`;
+
+  if (nodes.has(nodeId)) {
+    const existing = nodes.get(nodeId);
+    existing.status = 'pending';
+    existing.badge.textContent = '生成中...';
+    existing.badge.className = 'badge conclusion-badge';
+    existing.mdEl.textContent = '正在综合各模型讨论结果，生成最终结论文档...';
+    existing.markdown = '';
+    if (existing.retryBtn) existing.retryBtn.disabled = true;
+    return;
+  }
+
+  if (cluster.conclusionNodeId && cluster.conclusionNodeId !== nodeId) {
+    const oldNode = nodes.get(cluster.conclusionNodeId);
+    if (oldNode) { oldNode.root.remove(); nodes.delete(cluster.conclusionNodeId); }
+  }
+
+  const modelNodes = cluster.modelNodeIds.map(id => nodes.get(id)).filter(Boolean);
+  let cx = cluster.baseX - CONCLUSION_NODE_WIDTH / 2;
+  let cy = cluster.modelY + MODEL_NODE_HEIGHT + 40;
+  if (modelNodes.length > 0) {
+    const lastModel = modelNodes[modelNodes.length - 1];
+    cy = lastModel.y + MODEL_NODE_HEIGHT + 40;
+  }
+
+  createConclusionNode({
+    nodeId,
+    requestId: payload.request_id,
+    x: cx,
+    y: cy,
+    model: payload.model || '',
+    markdown: '',
+    status: 'pending',
+  });
+
+  addEdge({
+    id: `edge-user-${payload.request_id}-${nodeId}`,
+    sourceId: `user-${payload.request_id}`,
+    targetId: nodeId,
+    type: 'conclusion_edge',
+  });
+
+  cluster.conclusionNodeId = nodeId;
+  updateClusterBounds(payload.request_id);
+  renderEdges();
+  renderMinimap();
+}
+
+function handleConclusionDone(payload) {
+  const nodeId = `conclusion-${payload.request_id}`;
+  const node = nodes.get(nodeId);
+  if (!node) {
+    handleConclusionStart(payload);
+    const created = nodes.get(nodeId);
+    if (created) {
+      created.markdown = payload.markdown || '';
+      created.status = 'success';
+      created.model = payload.model || '';
+      created.badge.textContent = '已完成';
+      created.badge.className = 'badge conclusion-badge ok';
+      created.mdEl.innerHTML = window.renderMarkdown ? window.renderMarkdown(payload.markdown || '') : escapeHtml(payload.markdown || '');
+      if (created.retryBtn) created.retryBtn.disabled = false;
+    }
+  } else {
+    node.markdown = payload.markdown || '';
+    node.status = 'success';
+    node.model = payload.model || '';
+    node.badge.textContent = '已完成';
+    node.badge.className = 'badge conclusion-badge ok';
+    node.mdEl.innerHTML = window.renderMarkdown ? window.renderMarkdown(payload.markdown || '') : escapeHtml(payload.markdown || '');
+    if (node.retryBtn) node.retryBtn.disabled = false;
+  }
+
+  latestConclusionMarkdown = payload.markdown || '';
+  latestConclusionRequestId = payload.request_id || '';
+  updateConclusionHint();
+  updateClusterBounds(payload.request_id);
+  renderMinimap();
+}
+
+function handleConclusionError(payload) {
+  const nodeId = `conclusion-${payload.request_id}`;
+  const node = nodes.get(nodeId);
+  if (node) {
+    node.status = 'failed';
+    node.badge.textContent = '失败';
+    node.badge.className = 'badge conclusion-badge err';
+    node.mdEl.textContent = payload.content || '结论生成失败';
+    if (node.retryBtn) node.retryBtn.disabled = false;
   }
 }
 
@@ -1149,7 +1402,8 @@ function placeCluster({ modelCount, parentRequestId, sourceModel }) {
     USER_NODE_WIDTH,
     modelCount * MODEL_NODE_WIDTH + Math.max(0, modelCount - 1) * CLUSTER_GAP_X
   );
-  const footprintHeight = USER_NODE_HEIGHT + CLUSTER_GAP_Y + MODEL_NODE_HEIGHT;
+  const estimatedUserHeight = USER_NODE_HEIGHT + 250;
+  const footprintHeight = estimatedUserHeight + CLUSTER_GAP_Y + MODEL_NODE_HEIGHT;
 
   const viewportRect = viewportEl.getBoundingClientRect();
   const centerWorldX = (viewportRect.width / 2 - state.offsetX) / state.scale;
@@ -1192,7 +1446,14 @@ function placeCluster({ modelCount, parentRequestId, sourceModel }) {
   };
 }
 
+function refreshAllClusterBounds() {
+  for (const rid of requestClusters.keys()) {
+    updateClusterBounds(rid);
+  }
+}
+
 function findAvailableBox(candidates, width, height) {
+  refreshAllClusterBounds();
   for (const candidate of candidates) {
     const bbox = { x: candidate.x, y: candidate.y, width, height };
     if (!hasClusterOverlap(bbox)) {
@@ -1241,7 +1502,7 @@ function createUserNode({
   root.style.top = `${y}px`;
 
   const branchText = parentRequestId && sourceModel
-    ? `分支自 ${getDisplayName(sourceModel)} · 第 ${sourceRound || 1} 轮`
+    ? `分支自 ${escapeHtml(getDisplayName(sourceModel))} · 第 ${sourceRound || 1} 轮`
     : `主问题 · ${discussionRounds} 轮讨论`;
   const branchChip = parentRequestId && sourceModel
     ? `<span class="info-chip branch-origin">来自 ${escapeHtml(getDisplayName(sourceModel))} · 第 ${sourceRound || 1} 轮</span>`
@@ -1326,8 +1587,8 @@ function createModelNode({ nodeId, requestId, model, x, y }) {
       <div class="node-title">
         <span class="node-dot"></span>
         <div>
-          <strong>${getDisplayName(model)}</strong>
-          <div class="node-subtitle">模型 ID: ${model}</div>
+          <strong>${escapeHtml(getDisplayName(model))}</strong>
+          <div class="node-subtitle">模型 ID: ${escapeHtml(model)}</div>
         </div>
       </div>
       <span class="badge">待命</span>
@@ -1396,6 +1657,130 @@ function createModelNode({ nodeId, requestId, model, x, y }) {
       sendBranch(node);
     }
   });
+}
+
+function createConclusionNode({ nodeId, requestId, x, y, model, markdown, status }) {
+  const root = document.createElement('section');
+  root.className = 'node conclusion-node';
+  root.dataset.nodeId = nodeId;
+  root.style.left = `${x}px`;
+  root.style.top = `${y}px`;
+
+  const modelLabel = model ? escapeHtml(getDisplayName(model)) : '系统';
+  const statusLabel = status === 'pending' ? '生成中...' : (status === 'success' ? '已完成' : '失败');
+  const statusClass = status === 'pending' ? '' : (status === 'success' ? 'ok' : 'err');
+
+  root.innerHTML = `
+    <header class="node-header conclusion-header" data-drag-handle="true">
+      <div class="node-title">
+        <span class="node-dot conclusion-dot"></span>
+        <div>
+          <strong>最终结论</strong>
+          <div class="node-subtitle">由 ${modelLabel} 综合生成</div>
+        </div>
+      </div>
+      <span class="badge conclusion-badge ${statusClass}">${statusLabel}</span>
+    </header>
+    <div class="conclusion-body">
+      <div class="md conclusion-md"></div>
+    </div>
+    <div class="conclusion-actions">
+      <button type="button" class="small-btn conclusion-copy">复制 Markdown</button>
+      <button type="button" class="small-btn conclusion-retry">重试结论</button>
+      <button type="button" class="small-btn conclusion-attach ${conclusionAutoAttach ? 'active' : ''}">
+        ${conclusionAutoAttach ? '自动注入：开' : '自动注入：关'}
+      </button>
+    </div>
+  `;
+
+  const mdEl = root.querySelector('.conclusion-md');
+  if (markdown && status === 'success') {
+    mdEl.innerHTML = window.renderMarkdown ? window.renderMarkdown(markdown) : escapeHtml(markdown);
+  } else if (status === 'pending') {
+    mdEl.textContent = '正在综合各模型讨论结果，生成最终结论文档...';
+  } else {
+    mdEl.textContent = '结论生成失败';
+  }
+
+  stageEl.appendChild(root);
+  bindNodeInteractions(root, nodeId, requestId);
+
+  const node = {
+    nodeId,
+    requestId,
+    type: 'conclusion',
+    x,
+    y,
+    root,
+    badge: root.querySelector('.conclusion-badge'),
+    retryBtn: root.querySelector('.conclusion-retry'),
+    mdEl,
+    markdown: markdown || '',
+    model: model || '',
+    status: status || 'pending',
+  };
+  nodes.set(nodeId, node);
+  if (node.retryBtn) node.retryBtn.disabled = node.status === 'pending';
+
+  root.querySelector('.conclusion-copy').addEventListener('click', async (e) => {
+    const text = node.markdown || '';
+    if (!text) { flashButtonLabel(e.currentTarget, '无内容'); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      flashButtonLabel(e.currentTarget, '已复制');
+    } catch { flashButtonLabel(e.currentTarget, '复制失败'); }
+  });
+
+  root.querySelector('.conclusion-attach').addEventListener('click', (e) => {
+    conclusionAutoAttach = !conclusionAutoAttach;
+    e.currentTarget.textContent = conclusionAutoAttach ? '自动注入：开' : '自动注入：关';
+    e.currentTarget.classList.toggle('active', conclusionAutoAttach);
+    updateConclusionHint();
+  });
+
+  root.querySelector('.conclusion-retry').addEventListener('click', (e) => {
+    retryConclusion(requestId, e.currentTarget);
+  });
+
+  return node;
+}
+
+function retryConclusion(requestId, button) {
+  if (!requestId || socket.readyState !== WebSocket.OPEN) {
+    flashButtonLabel(button, '不可重试');
+    return;
+  }
+  try {
+    socket.send(
+      JSON.stringify({
+        action: 'retry_conclusion',
+        source_request_id: requestId,
+        canvas_id: currentCanvasId,
+      })
+    );
+  } catch (_e) {
+    flashButtonLabel(button, '发送失败');
+    return;
+  }
+  button.disabled = true;
+  flashButtonLabel(button, '已发起');
+}
+
+function getConclusionNode(requestId) {
+  return nodes.get(`conclusion-${requestId}`) || null;
+}
+
+function updateConclusionHint() {
+  const hintEl = document.getElementById('conclusionHint');
+  if (!hintEl) return;
+  if (conclusionAutoAttach && latestConclusionMarkdown) {
+    const charCount = latestConclusionMarkdown.length;
+    hintEl.textContent = `下一轮将附带结论文档（${charCount} 字）`;
+    hintEl.classList.remove('hidden');
+  } else {
+    hintEl.classList.add('hidden');
+    hintEl.textContent = '';
+  }
 }
 
 function bindNodeInteractions(root, nodeId, requestId) {
@@ -1485,15 +1870,17 @@ function retryCurrentTurn(node, button) {
     flashButtonLabel(button, '不可重试');
     return;
   }
-  socket.send(
-    JSON.stringify({
-      action: 'retry_model',
-      source_request_id: node.requestId,
-      source_model: node.model,
-      source_round: round,
-      canvas_id: currentCanvasId,
-    })
-  );
+  try {
+    socket.send(
+      JSON.stringify({
+        action: 'retry_model',
+        source_request_id: node.requestId,
+        source_model: node.model,
+        source_round: round,
+        canvas_id: currentCanvasId,
+      })
+    );
+  } catch (_e) { return; }
   flashButtonLabel(button, '已发起');
 }
 
@@ -1504,19 +1891,21 @@ function sendBranch(node, overrideMessage = null) {
   }
   const round = node.activeRound || getLatestRound(node);
   if (!round) return;
-  socket.send(
-    JSON.stringify({
-      action: 'branch_chat',
-      message,
-      source_request_id: node.requestId,
-      source_model: node.model,
-      source_round: round,
-      discussion_rounds: Number(discussionRoundsEl.value || 2),
-      search_enabled: searchToggleEl.checked,
-      think_enabled: thinkToggleEl.checked,
-      canvas_id: currentCanvasId,
-    })
-  );
+  try {
+    socket.send(
+      JSON.stringify({
+        action: 'branch_chat',
+        message,
+        source_request_id: node.requestId,
+        source_model: node.model,
+        source_round: round,
+        discussion_rounds: Number(discussionRoundsEl.value || 2),
+        search_enabled: getSearchMode(),
+        think_enabled: thinkToggleEl.checked,
+        canvas_id: currentCanvasId,
+      })
+    );
+  } catch (_e) { return; }
   node.branchInput.value = '';
   node.branchBox.classList.add('hidden');
 }
@@ -1773,9 +2162,11 @@ function getNodeDimensions(node) {
     node.cachedHeight = h;
     return { width: w, height: h };
   }
+  const defaultWidth = node.type === 'user' ? USER_NODE_WIDTH : (node.type === 'conclusion' ? CONCLUSION_NODE_WIDTH : MODEL_NODE_WIDTH);
+  const defaultHeight = node.type === 'user' ? USER_NODE_HEIGHT : (node.type === 'conclusion' ? CONCLUSION_NODE_HEIGHT : MODEL_NODE_HEIGHT);
   return {
-    width: node.cachedWidth || (node.type === 'user' ? USER_NODE_WIDTH : MODEL_NODE_WIDTH),
-    height: node.cachedHeight || (node.type === 'user' ? USER_NODE_HEIGHT : MODEL_NODE_HEIGHT),
+    width: node.cachedWidth || defaultWidth,
+    height: node.cachedHeight || defaultHeight,
   };
 }
 
@@ -1841,16 +2232,21 @@ function renderMinimap() {
   const offsetX = (contentWidth - worldWidth * scale) / 2;
   const offsetY = (contentHeight - worldHeight * scale) / 2;
 
-  minimapNodesEl.innerHTML = allNodes
-    .map((node) => {
-      const { width, height } = getNodeDimensions(node);
-      const left = offsetX + (node.x - minX) * scale;
-      const top = offsetY + (node.y - minY) * scale;
-      const active = node.nodeId === (hoverNodeId || selectedNodeId);
-      const running = Boolean(getCluster(node.requestId)?.isRunning || getCluster(node.requestId)?.isCancelling);
-      return `<div class="minimap-node ${node.type} ${active ? 'active' : ''} ${running ? 'running' : ''}" style="left:${left}px;top:${top}px;width:${Math.max(8, width * scale)}px;height:${Math.max(6, height * scale)}px"></div>`;
-    })
-    .join('');
+  minimapNodesEl.innerHTML = '';
+  for (const node of allNodes) {
+    const { width, height } = getNodeDimensions(node);
+    const left = offsetX + (node.x - minX) * scale;
+    const top = offsetY + (node.y - minY) * scale;
+    const active = node.nodeId === (hoverNodeId || selectedNodeId);
+    const running = Boolean(getCluster(node.requestId)?.isRunning || getCluster(node.requestId)?.isCancelling);
+    const el = document.createElement('div');
+    el.className = `minimap-node ${node.type}${active ? ' active' : ''}${running ? ' running' : ''}`;
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    el.style.width = `${Math.max(8, width * scale)}px`;
+    el.style.height = `${Math.max(6, height * scale)}px`;
+    minimapNodesEl.appendChild(el);
+  }
 
   const viewportRect = viewportEl.getBoundingClientRect();
   const visibleLeft = (-state.offsetX) / state.scale;
@@ -1911,6 +2307,8 @@ function clearCanvas() {
   state.selectionSource = 'none';
   clusterCount = 0;
   latestRequestId = null;
+  latestConclusionMarkdown = '';
+  latestConclusionRequestId = '';
   hoverNodeId = null;
   selectedNodeId = null;
   selectionActionsEl?.classList.add('hidden');
@@ -1918,6 +2316,7 @@ function clearCanvas() {
   applyTransform();
   renderMinimap();
   updateComposerHint();
+  updateConclusionHint();
   refreshStatus();
 }
 
@@ -1977,6 +2376,7 @@ function updateClusterBounds(requestId) {
   const cluster = requestClusters.get(requestId);
   if (!cluster) return;
   const clusterNodeIds = [cluster.userNodeId, ...cluster.modelNodeIds];
+  if (cluster.conclusionNodeId) clusterNodeIds.push(cluster.conclusionNodeId);
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
@@ -2187,6 +2587,18 @@ function sendMessage() {
     }
   }
 
+  if (!contextBundle && conclusionAutoAttach && latestConclusionRequestId) {
+    const conclusionNode = getConclusionNode(latestConclusionRequestId);
+    const conclusionMd = conclusionNode?.markdown || latestConclusionMarkdown || '';
+    if (conclusionMd) {
+      let clipped = conclusionMd;
+      if (clipped.length > CONCLUSION_CONTEXT_MAX_CHARS) {
+        clipped = clipped.slice(0, CONCLUSION_CONTEXT_MAX_CHARS) + '\n\n[结论文档已截断]';
+      }
+      contextBundle = `以下是上一轮多模型讨论的最终结论文档，请基于此上下文继续回答：\n\n${clipped}`;
+    }
+  }
+
   const suffix = contextBundle ? `\n\n用户新的继续问题：${message}` : '';
   const maxContextLength = Math.max(0, MAX_MESSAGE_LENGTH - suffix.length);
   let clippedContext = contextBundle;
@@ -2195,16 +2607,18 @@ function sendMessage() {
   }
   const finalMessage = clippedContext ? `${clippedContext}${suffix}` : message;
 
-  socket.send(
-    JSON.stringify({
-      action: 'chat',
-      message: finalMessage,
-      discussion_rounds: Number(discussionRoundsEl.value || 2),
-      search_enabled: searchToggleEl.checked,
-      think_enabled: thinkToggleEl.checked,
-      canvas_id: currentCanvasId,
-    })
-  );
+  try {
+    socket.send(
+      JSON.stringify({
+        action: 'chat',
+        message: finalMessage,
+        discussion_rounds: Number(discussionRoundsEl.value || 2),
+        search_enabled: getSearchMode(),
+        think_enabled: thinkToggleEl.checked,
+        canvas_id: currentCanvasId,
+      })
+    );
+  } catch (_e) { return; }
 
   messageInput.value = '';
   autoResizeComposer();

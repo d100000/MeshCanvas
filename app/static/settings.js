@@ -1,138 +1,178 @@
-const settingsForm = document.getElementById('settingsForm');
-const modelList = document.getElementById('modelList');
-const addModelBtn = document.getElementById('addModelBtn');
-const settingsMessage = document.getElementById('settingsMessage');
-const apiKeyHint = document.getElementById('apiKeyHint');
-const fcKeyHint = document.getElementById('fcKeyHint');
+(async function () {
+  const infoEl = document.getElementById('accountInfo');
 
-function setMessage(text, type = '') {
-  settingsMessage.textContent = text || '';
-  settingsMessage.className = `auth-message ${type}`.trim();
-}
+  async function api(path) {
+    const res = await fetch(path, { credentials: 'same-origin' });
+    if (res.status === 401 || res.status === 403) {
+      window.location.href = '/login';
+      throw new Error('unauthorized');
+    }
+    return res.json().catch(() => ({}));
+  }
 
-function escapeAttr(value) {
-  return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+  async function apiWrite(method, path, body) {
+    const opts = {
+      method,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+    };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const res = await fetch(path, opts);
+    if (res.status === 401) { window.location.href = '/login'; throw new Error('unauthorized'); }
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.detail || '操作失败');
+    return d;
+  }
 
-function addModelRow(name = '', id = '') {
-  const row = document.createElement('div');
-  row.className = 'setup-model-row';
-  row.innerHTML = `
-    <input type="text" class="model-name-input" placeholder="如 GPT-5" value="${escapeAttr(name)}" required />
-    <input type="text" class="model-id-input" placeholder="如 gpt-5-turbo" value="${escapeAttr(id)}" required />
-    <button type="button" class="model-remove-btn" title="删除此模型">✕</button>
-  `;
-  row.querySelector('.model-remove-btn').addEventListener('click', () => {
-    if (modelList.children.length > 1) {
-      row.remove();
+  function esc(v) { const d = document.createElement('div'); d.textContent = v; return d.innerHTML; }
+
+  try {
+    const session = await api('/api/auth/session');
+    if (!session.authenticated) { window.location.href = '/login'; return; }
+    if (infoEl) infoEl.textContent = `当前登录账号：${session.username || '未知'}`;
+  } catch (err) {
+    if (infoEl) infoEl.textContent = '加载失败，请刷新重试。';
+    return;
+  }
+
+  async function loadSummary() {
+    try {
+      const { summary } = await api('/api/user/usage-summary');
+      document.getElementById('sumToday').textContent = `${summary.today_points} 点`;
+      document.getElementById('sumTodayCount').textContent = `${summary.today_count} 次调用`;
+      document.getElementById('sumWeek').textContent = `${summary.week_points} 点`;
+      document.getElementById('sumWeekCount').textContent = `${summary.week_count} 次调用`;
+      document.getElementById('sumTotal').textContent = `${summary.total_points} 点`;
+      document.getElementById('sumTotalCount').textContent = `${summary.total_count} 次调用`;
+      document.getElementById('sumBalance').textContent = `${summary.balance} 点`;
+    } catch (_) {}
+  }
+
+  async function loadDetail() {
+    const tbody = document.getElementById('usageTableBody');
+    try {
+      const { detail } = await api('/api/user/usage-detail?limit=100');
+      if (!detail || !detail.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="settings-muted">暂无用量记录</td></tr>';
+        return;
+      }
+      tbody.innerHTML = detail.map(r => {
+        const time = (r.created_at || '').slice(0, 16).replace('T', ' ');
+        const duration = r.duration_ms != null ? `${Math.round(r.duration_ms)}ms` : '-';
+        const points = r.points_consumed != null ? r.points_consumed.toFixed(4) : '-';
+        return `<tr>
+          <td>${esc(time)}</td>
+          <td>${esc(r.model)}</td>
+          <td>${r.prompt_tokens}</td>
+          <td>${r.completion_tokens}</td>
+          <td>${duration}</td>
+          <td>${points}</td>
+        </tr>`;
+      }).join('');
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="6" class="settings-muted">${esc(e.message || '加载失败')}</td></tr>`;
+    }
+  }
+
+  let _cachedModels = [];
+  let _cachedModelKeys = {};
+
+  async function loadCustomKey() {
+    const statusEl = document.getElementById('userApiInfo');
+    const billingMode = document.getElementById('billingMode');
+    const keysSection = document.getElementById('modelKeysSection');
+    const keysList = document.getElementById('modelKeysList');
+
+    try {
+      const data = await api('/api/user/custom-api-key');
+      _cachedModels = data.models || [];
+      _cachedModelKeys = data.model_keys || {};
+
+      billingMode.value = data.use_custom_key ? 'custom' : 'points';
+
+      if (data.user_api_base_url) {
+        statusEl.innerHTML = `<span class="settings-key-info">用户 API 地址：<code>${esc(data.user_api_base_url)}</code>（${esc(data.user_api_format || 'openai')} 格式）</span>`;
+      } else {
+        statusEl.innerHTML = '<span class="settings-key-inactive">管理员尚未配置用户自定义 API 地址</span>';
+      }
+
+      renderModelKeys(data.use_custom_key);
+    } catch (_) {
+      if (statusEl) statusEl.textContent = '加载失败';
+    }
+  }
+
+  function renderModelKeys(showKeys) {
+    const keysSection = document.getElementById('modelKeysSection');
+    const keysList = document.getElementById('modelKeysList');
+    keysSection.classList.toggle('hidden', !showKeys);
+    if (!showKeys) return;
+
+    keysList.innerHTML = _cachedModels.map(m => {
+      const masked = _cachedModelKeys[m.name] || '';
+      const statusText = masked ? `当前：${esc(masked)}` : '未配置';
+      const statusClass = masked ? 'settings-key-active' : 'settings-key-inactive';
+      return `<div class="settings-model-key-row">
+        <span class="settings-model-name">${esc(m.name)}</span>
+        <span class="${statusClass} settings-model-key-status">${statusText}</span>
+        <input type="password" class="settings-model-key-input" data-model="${esc(m.name)}" placeholder="留空则保持不变" />
+      </div>`;
+    }).join('') || '<div class="settings-muted">暂无模型</div>';
+  }
+
+  document.getElementById('billingMode').addEventListener('change', (e) => {
+    renderModelKeys(e.target.value === 'custom');
+  });
+
+  document.getElementById('saveCustomKeyBtn').addEventListener('click', async () => {
+    const msgEl = document.getElementById('customKeyMsg');
+    const useCustom = document.getElementById('billingMode').value === 'custom';
+
+    const modelKeys = {};
+    if (useCustom) {
+      for (const input of document.querySelectorAll('.settings-model-key-input')) {
+        const modelName = input.getAttribute('data-model');
+        const val = input.value.trim();
+        if (val) {
+          modelKeys[modelName] = val;
+        }
+      }
+      const existingKeys = _cachedModelKeys || {};
+      for (const [k, v] of Object.entries(existingKeys)) {
+        if (v && !(k in modelKeys)) {
+          modelKeys[k] = '__KEEP__';
+        }
+      }
+    }
+
+    try {
+      await apiWrite('PUT', '/api/user/custom-api-key', { model_keys: modelKeys, use_custom_key: useCustom });
+      msgEl.textContent = '已保存，请刷新画布页面使设置生效。';
+      msgEl.className = 'settings-msg ok';
+      for (const input of document.querySelectorAll('.settings-model-key-input')) {
+        input.value = '';
+      }
+      loadCustomKey();
+    } catch (e) {
+      msgEl.textContent = e.message || '保存失败';
+      msgEl.className = 'settings-msg err';
     }
   });
-  modelList.appendChild(row);
-}
 
-function collectModels() {
-  const rows = modelList.querySelectorAll('.setup-model-row');
-  const models = [];
-  for (const row of rows) {
-    const name = row.querySelector('.model-name-input').value.trim();
-    const id = row.querySelector('.model-id-input').value.trim();
-    if (name && id) {
-      models.push({ name, id });
+  document.getElementById('clearCustomKeyBtn').addEventListener('click', async () => {
+    const msgEl = document.getElementById('customKeyMsg');
+    try {
+      await apiWrite('DELETE', '/api/user/custom-api-key');
+      msgEl.textContent = '已清除所有自定义 Key，请刷新画布页面。';
+      msgEl.className = 'settings-msg ok';
+      loadCustomKey();
+    } catch (e) {
+      msgEl.textContent = e.message || '操作失败';
+      msgEl.className = 'settings-msg err';
     }
-  }
-  return models;
-}
+  });
 
-async function loadSettings() {
-  try {
-    const res = await fetch('/api/settings', { credentials: 'same-origin' });
-    if (res.status === 401) {
-      window.location.href = '/login';
-      return;
-    }
-    const data = await res.json();
-
-    settingsForm.api_base_url.value = data.api_base_url || '';
-    settingsForm.api_format.value = data.api_format || 'openai';
-    settingsForm.api_key.value = '';
-    settingsForm.firecrawl_api_key.value = '';
-    settingsForm.firecrawl_country.value = data.firecrawl_country || 'CN';
-    settingsForm.firecrawl_timeout_ms.value = data.firecrawl_timeout_ms || 45000;
-
-    if (apiKeyHint) {
-      apiKeyHint.textContent = data.api_key_masked ? `（当前：${data.api_key_masked}）` : '';
-    }
-    if (fcKeyHint) {
-      fcKeyHint.textContent = data.firecrawl_api_key_masked ? `（当前：${data.firecrawl_api_key_masked}）` : '';
-    }
-
-    modelList.innerHTML = '';
-    const models = data.models || [];
-    if (models.length) {
-      for (const m of models) {
-        addModelRow(m.name || '', m.id || '');
-      }
-    } else {
-      addModelRow();
-    }
-  } catch {
-    setMessage('加载设置失败，请刷新重试。', 'error');
-  }
-}
-
-addModelBtn.addEventListener('click', () => addModelRow());
-
-settingsForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-
-  const formData = new FormData(settingsForm);
-  const api_base_url = (formData.get('api_base_url') || '').trim();
-  const api_format = (formData.get('api_format') || 'openai').trim();
-  const api_key = (formData.get('api_key') || '').trim();
-  const firecrawl_api_key = (formData.get('firecrawl_api_key') || '').trim();
-  const firecrawl_country = (formData.get('firecrawl_country') || 'CN').trim();
-  const firecrawl_timeout_ms = parseInt(formData.get('firecrawl_timeout_ms') || '45000', 10) || 45000;
-  const models = collectModels();
-
-  if (!api_base_url) { setMessage('请填写 API 地址。', 'error'); return; }
-  if (!models.length) { setMessage('请至少添加一个模型。', 'error'); return; }
-
-  const submitBtn = settingsForm.querySelector('button[type="submit"]');
-  submitBtn.disabled = true;
-  submitBtn.innerHTML = '<span class="auth-spinner"></span>保存中';
-  submitBtn.classList.add('loading');
-  setMessage('');
-
-  try {
-    const res = await fetch('/api/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({
-        api_base_url, api_format, api_key, models,
-        firecrawl_api_key, firecrawl_country, firecrawl_timeout_ms,
-      }),
-    });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setMessage(payload.detail || '保存失败，请重试。', 'error');
-      return;
-    }
-    submitBtn.innerHTML = '<span class="auth-check">✓</span>已保存';
-    submitBtn.classList.remove('loading');
-    submitBtn.classList.add('success');
-    setMessage('');
-    setTimeout(() => {
-      submitBtn.textContent = '保存设置';
-      submitBtn.classList.remove('success');
-      loadSettings();
-    }, 1200);
-  } catch {
-    setMessage('网络异常，请稍后重试。', 'error');
-  } finally {
-    submitBtn.disabled = false;
-    submitBtn.classList.remove('loading');
-  }
-});
-
-loadSettings();
+  loadSummary();
+  loadDetail();
+  loadCustomKey();
+})();

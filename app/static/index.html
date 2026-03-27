@@ -33,11 +33,12 @@
             <button id="zoomResetBtn" type="button" class="tool-btn zoom-pill" title="重置缩放">100%</button>
             <button id="zoomInBtn" type="button" class="tool-btn" title="放大">＋</button>
           </div>
+          <span id="balanceDisplay" class="balance-pill" title="当前点数余额">-- 点</span>
           <span id="modelCount" class="muted"></span>
           <span id="status" class="status">连接中...</span>
           <button id="fitBtn" type="button" class="tool-btn">回到当前对话</button>
           <button id="clearBtn" type="button" class="tool-btn">清空画布</button>
-          <a href="/settings" class="tool-btn" id="settingsBtn">设置</a>
+          <a href="/settings" class="tool-btn" id="settingsBtn">账号</a>
           <button id="logoutBtn" type="button" class="tool-btn">退出登录</button>
         </div>
       </header>
@@ -54,8 +55,7 @@
             <button id="selectionClearBtn" type="button" class="small-btn">清除选择</button>
           </div>
           <div id="needsSetupBanner" class="needs-setup-banner hidden">
-            <span>尚未配置 API 连接信息，无法使用对话功能。</span>
-            <a href="/settings" class="small-btn">前往设置</a>
+            <span>管理员尚未完成模型配置，暂时无法使用对话功能，请联系管理员。</span>
           </div>
           <div class="canvas-tip hidden">按住空格 + 鼠标左键可移动画布；普通左键用于框选、点击与拖动卡片。</div>
           <aside id="minimap" class="minimap">
@@ -80,9 +80,13 @@
                 <option value="4">4 轮</option>
               </select>
             </label>
-            <label class="toggle-pill">
-              <input id="searchToggle" type="checkbox" checked />
+            <label class="control inline-control">
               <span>联网</span>
+              <select id="searchToggle">
+                <option value="auto" selected>自动</option>
+                <option value="true">开</option>
+                <option value="false">关</option>
+              </select>
             </label>
             <label class="toggle-pill">
               <input id="thinkToggle" type="checkbox" />
@@ -92,7 +96,8 @@
           <div class="composer-meta-right">
             <span id="composerMode" class="mode-pill">普通提问</span>
             <span id="saveStatus" class="save-status hidden"></span>
-            <span id="roundHint" class="muted">联网默认开启；思考开启后会更注重验证与分析。</span>
+            <span id="roundHint" class="muted">联网「自动」由预处理模型判断；思考开启后会更注重验证与分析。</span>
+          <span id="conclusionHint" class="conclusion-hint hidden"></span>
           </div>
         </div>
         <div id="selectedChips" class="selected-chips hidden"></div>
