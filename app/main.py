@@ -254,6 +254,8 @@ async def _load_global_service_settings() -> dict:
     """从 app_meta 加载全局模型/搜索配置，转为与原 user_settings 相同的结构。"""
     import json as _j
     raw = await database.get_global_model_config()
+    if not raw:
+        logger.warning("_load_global_service_settings: app_meta returned empty, no model_config_* keys found")
     models_raw = raw.get("model_config_models_json", "[]")
     try:
         models = _j.loads(models_raw)
@@ -1485,7 +1487,11 @@ async def selection_summary(request: Request) -> JSONResponse:
 
     try:
         summary, model = await _summarize_selection_bundle(bundle=bundle, count=count, user_settings=us)
+    except RuntimeError as exc:
+        # Business logic errors (e.g., no analysis model)
+        return JSONResponse({"detail": str(exc)}, status_code=400)
     except Exception as exc:
+        logger.exception("selection_summary failed: user=%s count=%d error=%s", user["user_id"], count, exc)
         await request_logger.log_event(
             {
                 "type": "selection_summary_error",
@@ -1493,9 +1499,10 @@ async def selection_summary(request: Request) -> JSONResponse:
                 "client_id": client_host,
                 "count": count,
                 "error": str(exc),
+                "error_type": type(exc).__name__,
             }
         )
-        return JSONResponse({"detail": str(exc)}, status_code=502)
+        return JSONResponse({"detail": "摘要生成失败，请稍后重试。"}, status_code=502)
 
     await request_logger.log_event(
         {
@@ -1552,7 +1559,7 @@ async def conversation_analysis(request: Request) -> JSONResponse:
 
     try:
         result, model = await _analyze_conversation(messages, user_settings=us)
-    except Exception as exc:
+    except RuntimeError as exc:
         await request_logger.log_event(
             {
                 "type": "conversation_analysis_error",
@@ -1562,7 +1569,22 @@ async def conversation_analysis(request: Request) -> JSONResponse:
                 "error": str(exc),
             }
         )
-        return JSONResponse({"detail": str(exc)}, status_code=502)
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    except Exception as exc:
+        logger.exception(
+            "conversation_analysis failed: user=%s request_id=%s",
+            user["user_id"], request_id,
+        )
+        await request_logger.log_event(
+            {
+                "type": "conversation_analysis_error",
+                "user_id": user["user_id"],
+                "client_id": client_host,
+                "request_id": request_id,
+                "error": str(exc),
+            }
+        )
+        return JSONResponse({"detail": "对话分析失败，请稍后重试。"}, status_code=502)
 
     await request_logger.log_event(
         {
@@ -2487,7 +2509,18 @@ async def chat_socket(websocket: WebSocket) -> None:
     user_settings = await _load_global_service_settings()
     needs_setup = not user_settings.get("api_key")
     if needs_setup:
+        logger.warning(
+            "ws_needs_setup: client=%s api_key_empty=%s base_url=%r models_count=%d",
+            client_id, not user_settings.get("api_key"), user_settings.get("api_base_url", ""), len(user_settings.get("models", [])),
+        )
         user_settings = {"models": [], "api_key": "", "api_base_url": "", "firecrawl_api_key": "", "firecrawl_country": "CN", "firecrawl_timeout_ms": 45000}
+    else:
+        logger.info(
+            "ws_config_loaded: client=%s base_url=%r models=%s api_key_len=%d",
+            client_id, user_settings.get("api_base_url", ""),
+            [m.get("name", m.get("id", "?")) for m in user_settings.get("models", [])],
+            len(user_settings.get("api_key", "")),
+        )
 
     using_custom_key = False
     user_keys_data = await database.get_user_custom_keys(user["user_id"])
