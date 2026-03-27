@@ -344,10 +344,13 @@ class AnthropicStream(LLMStream):
         }
         if system_text:
             create_kwargs["system"] = system_text
-        # Pass through compatible params
+        # Pass through compatible params (use sentinel to handle 0/0.0 correctly)
+        _MISSING = object()
         for key in ("temperature", "top_p", "top_k"):
-            val = self._extra_params.pop(key, None) or self._kwargs.pop(key, None)
-            if val is not None:
+            val = self._extra_params.pop(key, _MISSING)
+            if val is _MISSING:
+                val = self._kwargs.pop(key, _MISSING)
+            if val is not _MISSING:
                 create_kwargs[key] = val
         # Filter out OpenAI-only params
         for key in ("stream_options", "stream", "frequency_penalty", "presence_penalty",
@@ -409,10 +412,23 @@ class AnthropicStream(LLMStream):
                     )
             except Exception:
                 pass  # Best-effort
+            await self._close()
+
+    async def _close(self):
+        """Clean up the stream context manager (safe to call multiple times)."""
+        ctx = self._stream_ctx
+        if ctx is not None:
+            self._stream_ctx = None
+            self._stream = None
             try:
-                await self._stream_ctx.__aexit__(None, None, None)
+                await ctx.__aexit__(None, None, None)
             except Exception:
                 pass
+
+    def __del__(self):
+        # Warn if stream was opened but never properly closed
+        if self._stream_ctx is not None:
+            logger.debug("AnthropicStream was not properly closed; consider awaiting full iteration")
 
 
 def _extract_anthropic_text(response: object) -> str:

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-本地 Web 应用，提供无限画布界面，支持多模型并发 LLM 对话。用户发送一条提示词，同时调用多个 OpenAI 兼容模型，流式响应以节点形式渲染在可缩放/平移的画布上。支持对话分支、跨模型讨论轮次、Firecrawl 网络搜索，以及完整的管理后台（用户管理、计费、模型配置、审计日志）。
+本地 Web 应用，提供无限画布界面，支持多模型并发 LLM 对话。用户发送一条提示词，同时调用多个 LLM 模型（支持 OpenAI 和 Anthropic 两种 API 格式），流式响应以节点形式渲染在可缩放/平移的画布上。支持对话分支、跨模型讨论轮次、Firecrawl 网络搜索，以及完整的管理后台（用户管理、计费、模型配置、审计日志）。
 
 ## 环境配置
 
@@ -22,9 +22,12 @@ cp models_setting.example.json models_setting.json
 {
   "models": ["model-name-1", "model-name-2"],
   "API_key": "sk-xxxxx",
-  "base_url": "https://your-openai-compatible-endpoint/v1"
+  "base_url": "https://your-openai-compatible-endpoint/v1",
+  "api_format": "openai"
 }
 ```
+
+`api_format` 支持 `"openai"`（默认）和 `"anthropic"` 两种格式。
 
 **.env**（可选）：
 ```bash
@@ -53,7 +56,7 @@ uvicorn app.main:app --reload
 
 1. 已认证客户端通过 WebSocket 向 `/ws/chat` 发送消息
 2. `app/main.py` 将请求分发给 `app/chat_service.py` 中的 `MultiModelChatService`
-3. 服务为每个模型创建独立的 `asyncio` 并发任务，使用 `AsyncOpenAI` 调用
+3. 服务为每个模型创建独立的 `asyncio` 并发任务，通过 `app/llm_client.py` 统一客户端调用（根据 `api_format` 自动选择 OpenAI 或 Anthropic 后端）
 4. 每个任务将 delta 流式块通过同一 WebSocket 连接返回
 5. 前端 `app/static/app.js` 实时将流式内容渲染为画布节点
 
@@ -94,6 +97,7 @@ uvicorn app.main:app --reload
 | 文件 | 职责 |
 |------|------|
 | `app/main.py` | FastAPI 应用、HTTP 路由（含管理后台 API）、WebSocket 分发 |
+| `app/llm_client.py` | 统一 LLM 客户端抽象（OpenAI/Anthropic 双格式），工厂函数 `create_llm_client()` |
 | `app/chat_service.py` | 并发模型调用、流式处理、讨论轮次、Token 用量记录 |
 | `app/database.py` | SQLite 封装（WAL 模式，schema 版本管理至 v7） |
 | `app/auth.py` | 注册、登录、PBKDF2-HMAC-SHA256 密码哈希 |

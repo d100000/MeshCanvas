@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable
 from time import perf_counter
 
 from typing import Any
@@ -23,13 +22,15 @@ _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 def _is_retryable_error(exc: Exception) -> bool:
+    # Check HTTP status codes (works for both OpenAI and Anthropic SDK errors)
     status = getattr(exc, "status_code", None)
     if status and status in _RETRYABLE_STATUS_CODES:
         return True
     if isinstance(exc, (asyncio.TimeoutError, ConnectionError, OSError)):
         return True
     exc_name = type(exc).__name__
-    if any(k in exc_name for k in ("Timeout", "Connection", "ServiceUnavailable")):
+    if any(k in exc_name for k in ("Timeout", "Connection", "ServiceUnavailable",
+                                    "OverloadedError", "InternalServerError")):
         return True
     return False
 
