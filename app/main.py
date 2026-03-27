@@ -18,11 +18,10 @@ from uuid import uuid4
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from openai import AsyncOpenAI
-
 from app.auth import AuthError, AuthManager, SESSION_COOKIE_NAME, ADMIN_SESSION_COOKIE_NAME, SESSION_DAYS
 from app.bootstrap_admin import ensure_default_admin_user
 from app.chat_service import MultiModelChatService
+from app.llm_client import create_llm_client
 from app.config import get_settings, is_configured, save_settings
 from app.database import LocalDatabase
 from app.request_logger import RequestLogger
@@ -330,6 +329,16 @@ def _summarize_extra_headers(headers: dict[str, str]) -> dict[str, object]:
 def _build_openai_default_headers(extra_headers: dict[str, str] | None = None) -> dict[str, str] | None:
     headers = _sanitize_extra_headers(extra_headers or {})
     return headers or None
+
+
+def _create_llm_client_from_settings(user_settings: dict):
+    """Create a unified LLM client from user_settings dict."""
+    return create_llm_client(
+        user_settings.get("api_format", "openai"),
+        api_key=user_settings.get("api_key", ""),
+        base_url=user_settings.get("api_base_url", ""),
+        default_headers=_build_openai_default_headers(user_settings.get("extra_headers", {})),
+    )
 
 
 BASE_SYSTEM_PROMPT = (
@@ -879,11 +888,7 @@ async def _generate_conclusion(
         [dict(item, status="success") for item in latest_round_results],
         user_message,
     )
-    client = AsyncOpenAI(
-        api_key=user_settings.get("api_key", ""),
-        base_url=user_settings.get("api_base_url", ""),
-        default_headers=_build_openai_default_headers(user_settings.get("extra_headers", {})),
-    )
+    llm = _create_llm_client_from_settings(user_settings)
     reserved_points = 0.0
     if bill_points:
         reserved_points = await _estimate_conclusion_reserve_points(db, user_settings=user_settings)
@@ -904,14 +909,13 @@ async def _generate_conclusion(
             return
 
     try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
+        llm_resp = await asyncio.wait_for(
+            llm.complete(
                 model=model_id,
                 messages=[
                     {"role": "system", "content": _CONCLUSION_SYSTEM_PROMPT},
                     {"role": "user", "content": conclusion_input},
                 ],
-                stream=False,
                 temperature=0.3,
             ),
             timeout=_CONCLUSION_TIMEOUT_SECONDS,
@@ -949,14 +953,13 @@ async def _generate_conclusion(
             await db.add_points(user_id, reserved_points, user_id, "结论预扣返还")
         return
 
-    markdown = _extract_completion_text(response)
+    markdown = llm_resp.text
     if len(markdown) > _CONCLUSION_MAX_OUTPUT_CHARS:
         markdown = markdown[:_CONCLUSION_MAX_OUTPUT_CHARS] + "\n\n[结论已截断]"
 
     if bill_points and reserved_points > 0:
-        usage = getattr(response, "usage", None)
-        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        prompt_tokens = llm_resp.usage.prompt_tokens
+        completion_tokens = llm_resp.usage.completion_tokens
         actual_points = await _calculate_model_points_cost(
             db,
             model_id,
@@ -993,11 +996,7 @@ async def _summarize_selection_bundle(
         raise RuntimeError("未配置可用的摘要模型。")
 
     id_map = _build_model_id_map(models)
-    client = AsyncOpenAI(
-        api_key=user_settings["api_key"],
-        base_url=user_settings["api_base_url"],
-        default_headers=_build_openai_default_headers(user_settings.get("extra_headers", {})),
-    )
+    llm = _create_llm_client_from_settings(user_settings)
     clipped_bundle = bundle[:12000]
     prompt = (
         f"请将用户圈选的 {count} 个无限画布节点压缩成可供下一轮对话继续使用的上下文。\n"
@@ -1009,7 +1008,7 @@ async def _summarize_selection_bundle(
         "以下是待压缩的节点内容：\n\n"
         f"{clipped_bundle}"
     )
-    response = await client.chat.completions.create(
+    llm_resp = await llm.complete(
         model=id_map.get(model, model),
         messages=[
             {
@@ -1018,9 +1017,8 @@ async def _summarize_selection_bundle(
             },
             {"role": "user", "content": prompt},
         ],
-        stream=False,
     )
-    summary = _extract_completion_text(response)
+    summary = llm_resp.text
     if not summary:
         raise RuntimeError("摘要模型未返回可用内容。")
     return summary[:1200], model
@@ -1035,11 +1033,7 @@ async def _analyze_conversation(
         raise RuntimeError("未配置可用的分析模型。")
 
     id_map = _build_model_id_map(models)
-    client = AsyncOpenAI(
-        api_key=user_settings["api_key"],
-        base_url=user_settings["api_base_url"],
-        default_headers=_build_openai_default_headers(user_settings.get("extra_headers", {})),
-    )
+    llm = _create_llm_client_from_settings(user_settings)
 
     conversation_text = ""
     for msg in messages:
@@ -1060,15 +1054,14 @@ async def _analyze_conversation(
         f"对话内容：\n\n{conversation_text}"
     )
 
-    response = await client.chat.completions.create(
+    llm_resp = await llm.complete(
         model=id_map.get(model, model),
         messages=[
             {"role": "system", "content": "你是会话分析助手，只输出 JSON，不要输出任何解释。"},
             {"role": "user", "content": prompt},
         ],
-        stream=False,
     )
-    raw_text = _extract_completion_text(response)
+    raw_text = llm_resp.text
     if not raw_text:
         raise RuntimeError("分析模型未返回可用内容。")
 
@@ -2291,21 +2284,21 @@ async def admin_test_model_config(request: Request) -> JSONResponse:
         return JSONResponse({"detail": "模型不存在或尚未保存，请先保存模型配置。"}, status_code=400)
     selected_name, selected_id = selected
 
-    client = AsyncOpenAI(
+    llm = create_llm_client(
+        gs.get("api_format", "openai"),
         api_key=api_key,
         base_url=api_base_url,
         default_headers=_build_openai_default_headers(gs.get("extra_headers", {})),
     )
     started_at = monotonic()
     try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
+        llm_resp = await asyncio.wait_for(
+            llm.complete(
                 model=selected_id,
                 messages=[
                     {"role": "system", "content": "You are a concise assistant."},
                     {"role": "user", "content": "Reply with exactly: pong"},
                 ],
-                stream=False,
                 temperature=0,
                 max_tokens=_ADMIN_MODEL_TEST_MAX_TOKENS,
             ),
@@ -2346,10 +2339,14 @@ async def admin_test_model_config(request: Request) -> JSONResponse:
         )
 
     latency_ms = int(max(0, round((monotonic() - started_at) * 1000)))
-    preview = _extract_completion_text(response)
+    preview = llm_resp.text
     if len(preview) > _ADMIN_MODEL_TEST_MAX_PREVIEW_CHARS:
         preview = preview[: _ADMIN_MODEL_TEST_MAX_PREVIEW_CHARS - 1] + "…"
-    usage = _extract_completion_usage(response)
+    usage = {
+        "prompt_tokens": llm_resp.usage.prompt_tokens,
+        "completion_tokens": llm_resp.usage.completion_tokens,
+        "total_tokens": llm_resp.usage.total_tokens,
+    } if llm_resp.usage.total_tokens > 0 else None
 
     audit_detail: dict[str, object] = {
         "model_name": selected_name,
@@ -2546,10 +2543,12 @@ async def chat_socket(websocket: WebSocket) -> None:
         api_format=user_settings.get("user_api_format") if using_custom_key else user_settings.get("api_format"),
     )
 
+    effective_api_format = user_settings.get("user_api_format") if using_custom_key else user_settings.get("api_format", "openai")
     service = MultiModelChatService(
         api_key=effective_api_key,
         base_url=effective_base_url,
         models=user_settings.get("models", []),
+        api_format=effective_api_format or "openai",
         request_logger=request_logger,
         database=database,
         extra_params=user_settings.get("extra_params") or {},
@@ -3278,20 +3277,15 @@ async def _preprocess_analyze(
         "model": preprocess_model,
     })
 
-    client = AsyncOpenAI(
-        api_key=user_settings.get("api_key", ""),
-        base_url=user_settings.get("api_base_url", ""),
-        default_headers=_build_openai_default_headers(user_settings.get("extra_headers", {})),
-    )
+    llm = _create_llm_client_from_settings(user_settings)
     try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
+        llm_resp = await asyncio.wait_for(
+            llm.complete(
                 model=model_id,
                 messages=[
                     {"role": "system", "content": _PREPROCESS_ANALYZE_PROMPT},
                     {"role": "user", "content": user_message},
                 ],
-                stream=False,
                 temperature=0,
                 max_tokens=_PREPROCESS_MAX_TOKENS,
             ),
@@ -3301,7 +3295,7 @@ async def _preprocess_analyze(
         logger.warning("preprocess analyze failed request_id=%s error=%s", request_id, exc)
         return None
 
-    raw_text = _extract_completion_text(response)
+    raw_text = llm_resp.text
     if not raw_text:
         return None
 
@@ -3351,20 +3345,15 @@ async def _preprocess_organize_results(
     if len(raw_results) > 12000:
         raw_results = raw_results[:12000] + "\n\n[结果已截断]"
 
-    client = AsyncOpenAI(
-        api_key=user_settings.get("api_key", ""),
-        base_url=user_settings.get("api_base_url", ""),
-        default_headers=_build_openai_default_headers(user_settings.get("extra_headers", {})),
-    )
+    llm = _create_llm_client_from_settings(user_settings)
     try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
+        llm_resp = await asyncio.wait_for(
+            llm.complete(
                 model=model_id,
                 messages=[
                     {"role": "system", "content": _PREPROCESS_ORGANIZE_PROMPT},
                     {"role": "user", "content": f"用户问题：{user_message}\n\n搜索结果：\n{raw_results}"},
                 ],
-                stream=False,
                 temperature=0.2,
             ),
             timeout=_PREPROCESS_ORGANIZE_TIMEOUT_SECONDS,
@@ -3373,7 +3362,7 @@ async def _preprocess_organize_results(
         logger.warning("preprocess organize failed request_id=%s error=%s", request_id, exc)
         return None
 
-    organized = _extract_completion_text(response)
+    organized = llm_resp.text
     if organized:
         await send_event(websocket, {
             "type": "search_organized",

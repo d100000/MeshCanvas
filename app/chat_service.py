@@ -8,9 +8,9 @@ from time import perf_counter
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
-from openai import AsyncOpenAI
 
 from app.database import LocalDatabase
+from app.llm_client import LLMClient, LLMStream, create_llm_client
 from app.request_logger import EventBus, RequestLogger
 
 logger = logging.getLogger(__name__)
@@ -34,20 +34,6 @@ def _is_retryable_error(exc: Exception) -> bool:
     return False
 
 
-def _is_unsupported_usage_stream_option_error(exc: Exception) -> bool:
-    status = getattr(exc, "status_code", None)
-    if status != 400:
-        return False
-    msg = str(exc).lower()
-    return (
-        "stream_options" in msg
-        or "include_usage" in msg
-        or "unknown parameter" in msg
-        or "unrecognized request argument" in msg
-        or "extra fields not permitted" in msg
-    )
-
-
 class MultiModelChatService:
     def __init__(
         self,
@@ -55,6 +41,7 @@ class MultiModelChatService:
         api_key: str,
         base_url: str,
         models: list[dict[str, str]],
+        api_format: str = "openai",
         request_logger: EventBus | None = None,
         database: LocalDatabase | None = None,
         extra_params: dict[str, Any] | None = None,
@@ -62,7 +49,13 @@ class MultiModelChatService:
     ) -> None:
         self.models = [m["name"] for m in models]
         self.model_id_map = {m["name"]: m["id"] for m in models}
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, default_headers=extra_headers or None)
+        self.api_format = (api_format or "openai").strip().lower()
+        self.llm_client: LLMClient = create_llm_client(
+            self.api_format,
+            api_key=api_key,
+            base_url=base_url,
+            default_headers=extra_headers or None,
+        )
         self.request_logger = request_logger or RequestLogger()
         self.database = database
         self.extra_params = extra_params or {}
@@ -332,37 +325,16 @@ class MultiModelChatService:
         total_rounds: int,
     ) -> tuple[str, dict[str, int] | None]:
         chunks: list[str] = []
-        usage: dict[str, int] | None = None
         trimmed_history = self._trim_history(history)
         api_model_id = self.model_id_map.get(model, model)
-        create_kwargs: dict[str, Any] = {
-            "model": api_model_id,
-            "messages": trimmed_history,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-        if self.extra_params:
-            create_kwargs.update(self.extra_params)
-        try:
-            stream = await self.client.chat.completions.create(**create_kwargs)
-        except Exception as exc:
-            # Some OpenAI-compatible services reject stream_options/include_usage.
-            if (
-                create_kwargs.get("stream_options")
-                and _is_unsupported_usage_stream_option_error(exc)
-            ):
-                logger.info(
-                    "model_stream_usage_fallback model=%s reason=%s",
-                    model,
-                    type(exc).__name__,
-                )
-                create_kwargs.pop("stream_options", None)
-                stream = await self.client.chat.completions.create(**create_kwargs)
-            else:
-                raise
 
-        async for chunk in stream:
-            delta_text = self._extract_delta_text(chunk)
+        stream: LLMStream = self.llm_client.stream(
+            model=api_model_id,
+            messages=trimmed_history,
+            extra_params=dict(self.extra_params) if self.extra_params else None,
+        )
+
+        async for delta_text in stream:
             if delta_text:
                 chunks.append(delta_text)
                 await self._send_event(
@@ -376,14 +348,15 @@ class MultiModelChatService:
                         "content": delta_text,
                     },
                 )
-            chunk_usage = getattr(chunk, "usage", None)
-            if chunk_usage:
-                usage = {
-                    "prompt_tokens": getattr(chunk_usage, "prompt_tokens", 0) or 0,
-                    "completion_tokens": getattr(chunk_usage, "completion_tokens", 0) or 0,
-                    "total_tokens": getattr(chunk_usage, "total_tokens", 0) or 0,
-                }
-        return "".join(chunks), usage
+
+        usage_dict: dict[str, int] | None = None
+        if stream.usage.total_tokens > 0 or stream.usage.prompt_tokens > 0:
+            usage_dict = {
+                "prompt_tokens": stream.usage.prompt_tokens,
+                "completion_tokens": stream.usage.completion_tokens,
+                "total_tokens": stream.usage.total_tokens,
+            }
+        return "".join(chunks), usage_dict
 
     async def _send_event(self, websocket: WebSocket, payload: dict[str, Any]) -> None:
         async with self._send_lock:
@@ -491,25 +464,3 @@ class MultiModelChatService:
             kept.append(msg)
         kept.reverse()
         return system_msgs + kept
-
-    @staticmethod
-    def _extract_delta_text(chunk: Any) -> str:
-        choices = getattr(chunk, "choices", None) or []
-        if not choices:
-            return ""
-
-        delta = getattr(choices[0], "delta", None)
-        if delta is None:
-            return ""
-
-        content = getattr(delta, "content", None)
-        if isinstance(content, str):
-            return content
-        if isinstance(content, Iterable):
-            parts: list[str] = []
-            for item in content:
-                text = getattr(item, "text", None)
-                if text:
-                    parts.append(text)
-            return "".join(parts)
-        return ""
