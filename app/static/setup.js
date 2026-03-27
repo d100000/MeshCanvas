@@ -48,11 +48,18 @@ setupForm.addEventListener('submit', async (event) => {
   event.preventDefault();
 
   const formData = new FormData(setupForm);
+  const admin_username = (formData.get('admin_username') || '').trim();
+  const admin_password = (formData.get('admin_password') || '');
   const base_url = (formData.get('base_url') || '').trim();
   const api_format = (formData.get('api_format') || 'openai').trim();
   const API_key = (formData.get('API_key') || '').trim();
   const models = collectModels();
+  const firecrawl_api_key = (formData.get('firecrawl_api_key') || '').trim();
+  const firecrawl_country = (formData.get('firecrawl_country') || 'CN').trim();
+  const firecrawl_timeout_ms = parseInt(formData.get('firecrawl_timeout_ms') || '45000', 10) || 45000;
 
+  if (!admin_username || admin_username.length < 3) { setMessage('管理员用户名至少 3 位。', 'error'); return; }
+  if (!admin_password || admin_password.length < 8) { setMessage('管理员密码至少 8 位。', 'error'); return; }
   if (!base_url) { setMessage('请填写 API 地址。', 'error'); return; }
   if (!API_key) { setMessage('请填写 API Key。', 'error'); return; }
   if (!models.length) { setMessage('请至少添加一个模型。', 'error'); return; }
@@ -66,7 +73,11 @@ setupForm.addEventListener('submit', async (event) => {
     const response = await fetch('/api/setup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ base_url, api_format, API_key, models }),
+      body: JSON.stringify({
+        admin_username, admin_password,
+        base_url, api_format, API_key, models,
+        firecrawl_api_key, firecrawl_country, firecrawl_timeout_ms,
+      }),
       credentials: 'same-origin',
     });
     const payload = await response.json().catch(() => ({}));
@@ -74,8 +85,8 @@ setupForm.addEventListener('submit', async (event) => {
       setMessage(payload.detail || '保存失败，请重试。', 'error');
       return;
     }
-    setMessage('配置成功！正在跳转到注册页面...', 'success');
-    setTimeout(() => { window.location.href = '/'; }, 600);
+    setMessage('配置成功！正在跳转到登录页面...', 'success');
+    setTimeout(() => { window.location.href = '/login'; }, 600);
   } catch {
     setMessage('网络异常，请稍后重试。', 'error');
   } finally {

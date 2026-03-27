@@ -1604,6 +1604,31 @@ a.auth-link {
   font-weight: 400;
 }
 
+.settings-info-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-info-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-info-label {
+  flex-shrink: 0;
+  min-width: 80px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.settings-info-value {
+  color: var(--text);
+  word-break: break-all;
+}
+
 .settings-actions {
   display: flex;
   align-items: center;

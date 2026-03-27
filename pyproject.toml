@@ -19,5 +19,5 @@ dependencies = [
 [tool.uvicorn]
 factory = false
 
-[tool.setuptools]
-packages = ["app"]
+[tool.setuptools.packages.find]
+include = ["app", "app.*"]
