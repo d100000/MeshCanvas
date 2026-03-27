@@ -618,59 +618,6 @@ def _mask_key(key: str) -> str:
     return key[:3] + "****" + key[-4:]
 
 
-def _extract_completion_text(response: object) -> str:
-    choices = getattr(response, "choices", None) or []
-    if not choices:
-        return ""
-    message = getattr(choices[0], "message", None)
-    if message is None:
-        return ""
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text") or item.get("content") or ""
-            else:
-                text = getattr(item, "text", None) or getattr(item, "content", None) or ""
-            if isinstance(text, str) and text.strip():
-                parts.append(text.strip())
-        return "\n".join(parts).strip()
-    return str(content or "").strip()
-
-
-def _extract_completion_usage(response: object) -> dict[str, int] | None:
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return None
-
-    def _read_token_count(name: str) -> int:
-        if isinstance(usage, dict):
-            raw = usage.get(name, 0)
-        else:
-            raw = getattr(usage, name, 0)
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            return 0
-        return value if value > 0 else 0
-
-    prompt_tokens = _read_token_count("prompt_tokens")
-    completion_tokens = _read_token_count("completion_tokens")
-    total_tokens = _read_token_count("total_tokens")
-    if total_tokens <= 0:
-        total_tokens = prompt_tokens + completion_tokens
-    if prompt_tokens <= 0 and completion_tokens <= 0 and total_tokens <= 0:
-        return None
-    return {
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens,
-    }
-
-
 def _pick_saved_model_for_test(
     models_raw: object, *, model_name: str = "", model_id: str = "",
 ) -> tuple[str, str] | None:

@@ -250,7 +250,13 @@ def _extract_openai_usage(response: object) -> TokenUsage:
 # ---------------------------------------------------------------------------
 
 def _split_system_messages(messages: list[dict[str, str]]) -> tuple[str | None, list[dict[str, str]]]:
-    """Anthropic requires system prompt as a top-level parameter, not in messages."""
+    """Anthropic requires system prompt as a top-level parameter, not in messages.
+
+    Also enforces Anthropic constraints:
+    - Messages must start with "user" role
+    - No consecutive same-role messages (merged if found)
+    - Messages list must not be empty
+    """
     system_parts: list[str] = []
     non_system: list[dict[str, str]] = []
     for m in messages:
@@ -260,9 +266,12 @@ def _split_system_messages(messages: list[dict[str, str]]) -> tuple[str | None, 
                 system_parts.append(content)
         else:
             non_system.append(m)
+    # Anthropic requires at least one message; if all were system, add a placeholder.
+    if not non_system:
+        non_system.append({"role": "user", "content": "请继续。"})
     # Anthropic requires messages to start with "user" role.
     # If first message is "assistant", prepend a minimal user message.
-    if non_system and non_system[0].get("role") != "user":
+    elif non_system[0].get("role") != "user":
         non_system.insert(0, {"role": "user", "content": "请继续。"})
     # Anthropic doesn't allow consecutive same-role messages; merge them.
     merged: list[dict[str, str]] = []
@@ -292,6 +301,13 @@ class AnthropicClient(LLMClient):
             init_kwargs["default_headers"] = default_headers
         self.client = AsyncAnthropic(**init_kwargs)
 
+    # OpenAI-only parameters that Anthropic does not accept
+    _OPENAI_ONLY_KWARGS = frozenset({
+        "stream_options", "stream", "frequency_penalty", "presence_penalty",
+        "logprobs", "top_logprobs", "n", "seed", "logit_bias", "response_format",
+        "tools", "tool_choice", "parallel_tool_calls", "user", "service_tier",
+    })
+
     async def complete(self, *, model, messages, temperature=None, max_tokens=None, **kwargs) -> LLMResponse:
         system_text, clean_messages = _split_system_messages(messages)
         create_kwargs: dict[str, Any] = {
@@ -303,9 +319,15 @@ class AnthropicClient(LLMClient):
             create_kwargs["system"] = system_text
         if temperature is not None:
             create_kwargs["temperature"] = temperature
-        # Filter out OpenAI-only kwargs that Anthropic doesn't support
-        for key in ("stream_options", "stream"):
-            kwargs.pop(key, None)
+        # Pass through Anthropic-compatible kwargs, skip OpenAI-only ones
+        for key in ("top_p", "top_k"):
+            if key in kwargs:
+                create_kwargs[key] = kwargs.pop(key)
+        for key in list(kwargs):
+            if key in self._OPENAI_ONLY_KWARGS:
+                kwargs.pop(key)
+            else:
+                logger.debug("anthropic_complete: passing unknown kwarg %r", key)
 
         response = await self.client.messages.create(**create_kwargs)
         text = _extract_anthropic_text(response)
@@ -352,13 +374,10 @@ class AnthropicStream(LLMStream):
                 val = self._kwargs.pop(key, _MISSING)
             if val is not _MISSING:
                 create_kwargs[key] = val
-        # Filter out OpenAI-only params
-        for key in ("stream_options", "stream", "frequency_penalty", "presence_penalty",
-                     "logprobs", "top_logprobs", "n", "seed"):
+        # Filter out OpenAI-only params (same set as AnthropicClient._OPENAI_ONLY_KWARGS)
+        for key in AnthropicClient._OPENAI_ONLY_KWARGS:
             self._extra_params.pop(key, None)
             self._kwargs.pop(key, None)
-        # Apply remaining extra_params cautiously
-        # (most extra params are OpenAI-specific, skip them for Anthropic)
 
         self._stream_ctx = self._client.messages.stream(**create_kwargs)
         self._stream = await self._stream_ctx.__aenter__()
