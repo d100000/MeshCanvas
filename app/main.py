@@ -3499,6 +3499,7 @@ async def _run_search_if_needed(
             await database.record_event(event_type="search_complete", request_id=request_id, client_id=client_id, payload=completed_payload)
         return search_bundle
     except Exception as exc:
+        logger.warning("firecrawl search failed: request_id=%s query=%r error=%s", request_id, query, exc, exc_info=True)
         error_payload = {
             "type": "search_error",
             "request_id": request_id,
@@ -3507,7 +3508,8 @@ async def _run_search_if_needed(
         }
         await websocket.send_json(error_payload)
         if database is not None:
-            await database.record_event(event_type="search_error", request_id=request_id, client_id=client_id, payload=error_payload)
+            log_payload = {**error_payload, "error_detail": str(exc)}
+            await database.record_event(event_type="search_error", request_id=request_id, client_id=client_id, payload=log_payload)
         return None
 
 
