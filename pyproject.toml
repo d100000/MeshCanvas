@@ -3,9 +3,9 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "multi-model-webchat"
+name = "nanobob"
 version = "0.1.0"
-description = "Local web chat that streams responses from multiple OpenAI-compatible models concurrently."
+description = "NanoBob — next-gen AI workbench with infinite canvas and roundtable forum for multi-model concurrent dialogue."
 requires-python = ">=3.9"
 dependencies = [
   "fastapi>=0.110",

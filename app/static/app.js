@@ -640,7 +640,7 @@ function buildContextBundleFromSelection() {
   });
 
   return [
-    '以下内容来自无限画布中用户当前选中的卡片，请先基于这些上下文继续思考。',
+    '以下内容来自 NanoBob 画布中用户当前选中的卡片，请先基于这些上下文继续思考。',
     '要求：优先提炼结论、保留关键分歧、压缩中间过程，不要机械重复原文。',
     ...sections,
   ].join('\n\n');

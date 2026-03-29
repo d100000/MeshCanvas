@@ -342,9 +342,9 @@ def _create_llm_client_from_settings(user_settings: dict):
 
 
 BASE_SYSTEM_PROMPT = (
-    "你是一个在无限画布里协作的模型节点。"
+    "你是 NanoBob AI 工作台中的协作模型节点。"
     "回答必须使用清晰的 Markdown。"
-    "如果给了联网搜索结果，请优先基于搜索结果回答，并在最后附上“参考来源”列表。"
+    "如果给了联网搜索结果，请优先基于搜索结果回答，并在最后附上「参考来源」列表。"
     "不要虚构来源。"
 )
 
@@ -412,6 +412,33 @@ async def log_http_request(request: Request, call_next):
     for key, value in security_headers.items():
         response.headers.setdefault(key, value)
     return response
+
+
+# -- Setup guard middleware ---------------------------------------------------
+# Registered AFTER log_http_request so that FastAPI's LIFO ordering ensures
+# this middleware runs BEFORE the logger (i.e. outermost layer).
+# When the app has not yet been initialised via /setup, ALL pages and API
+# endpoints redirect (or return 503) except /setup itself, /api/setup, and
+# static assets.
+
+_SETUP_ALLOWED_PREFIXES = ("/setup", "/api/setup", "/static/")
+
+
+@app.middleware("http")
+async def setup_guard(request: Request, call_next):
+    """Block every route until initial setup is complete."""
+    if not is_configured():
+        path = request.url.path
+        if not any(path.startswith(p) for p in _SETUP_ALLOWED_PREFIXES):
+            # API / XHR calls get a JSON 503; browsers get a redirect.
+            accept = request.headers.get("accept", "")
+            if "application/json" in accept or path.startswith("/api/") or path.startswith("/ws/"):
+                return JSONResponse(
+                    {"detail": "系统尚未完成初始化，请先访问 /setup 进行配置。"},
+                    status_code=503,
+                )
+            return RedirectResponse(url="/setup", status_code=303)
+    return await call_next(request)
 
 
 async def _get_request_user(request: Request) -> dict[str, str] | None:
@@ -946,7 +973,7 @@ async def _summarize_selection_bundle(
     llm = _create_llm_client_from_settings(user_settings)
     clipped_bundle = bundle[:12000]
     prompt = (
-        f"请将用户圈选的 {count} 个无限画布节点压缩成可供下一轮对话继续使用的上下文。\n"
+        f"请将用户圈选的 {count} 个画布节点压缩成可供下一轮对话继续使用的上下文。\n"
         "输出要求：\n"
         "1. 使用简洁中文；\n"
         "2. 优先保留最终结论、关键依据、核心分歧、下一步建议；\n"
@@ -960,7 +987,7 @@ async def _summarize_selection_bundle(
         messages=[
             {
                 "role": "system",
-                "content": "你是无限画布里的上下文压缩助手，只输出给下一轮模型使用的高密度摘要。",
+                "content": "你是 NanoBob 工作台的上下文压缩助手，只输出给下一轮模型使用的高密度摘要。",
             },
             {"role": "user", "content": prompt},
         ],
