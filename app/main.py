@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
-import logging.config
 import math
 import os
 import secrets
@@ -26,7 +25,7 @@ from app.config import get_settings, is_configured, save_settings
 from app.database import LocalDatabase
 from app.request_logger import RequestLogger
 from app.search_service import FirecrawlSearchService, SearchBundle, SearchItem
-from app.security import RateLimiter, build_security_headers
+from app.security import RateLimiter, build_security_headers, LANDING_CSP
 
 logger = logging.getLogger(__name__)
 
@@ -410,7 +409,10 @@ async def log_http_request(request: Request, call_next):
     _http_log_tasks.add(_t)
     _t.add_done_callback(_http_log_tasks.discard)
     for key, value in security_headers.items():
-        response.headers.setdefault(key, value)
+        if key == "Content-Security-Policy" and request.url.path == "/":
+            response.headers[key] = LANDING_CSP
+        else:
+            response.headers.setdefault(key, value)
     return response
 
 
@@ -1072,19 +1074,22 @@ def _html_response(path: Path) -> FileResponse:
 
 
 @app.get("/")
-async def index(request: Request) -> Response:
-    if not is_configured():
-        return RedirectResponse(url="/setup", status_code=303)
+async def landing(request: Request) -> Response:
+    return _html_response(STATIC_DIR / "landing.html")
+
+
+@app.get("/app")
+async def canvas_app(request: Request) -> Response:
     user = await _get_request_user(request)
     if not user:
-        return _html_response(STATIC_DIR / "login.html")
+        return RedirectResponse(url="/login", status_code=303)
     return _html_response(STATIC_DIR / "index.html")
 
 
 @app.get("/setup")
 async def setup_page(request: Request) -> Response:
     if is_configured():
-        return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url="/login", status_code=303)
     return _html_response(STATIC_DIR / "setup.html")
 
 
@@ -1301,7 +1306,7 @@ async def login_page(request: Request):
         return RedirectResponse(url="/setup", status_code=303)
     user = await _get_request_user(request)
     if user:
-        return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url="/app", status_code=303)
     return _html_response(STATIC_DIR / "login.html")
 
 

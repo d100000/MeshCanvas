@@ -6,12 +6,14 @@
     <title>登录 · NanoBob</title>
     <meta name="description" content="登录 NanoBob 下一代 AI 工作台，开启多模型并发对话与无限画布协作。" />
     <meta name="robots" content="noindex" />
+    <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body class="auth-body">
     <main class="auth-shell">
       <section class="auth-card">
         <div class="auth-brand">
+          <img src="/static/logo.svg" alt="NanoBob" class="auth-logo" />
           <span class="auth-badge">Secure Access</span>
           <h1>NanoBob</h1>
           <p>登录或注册，进入下一代 AI 工作台。</p>
@@ -50,6 +52,7 @@
 
         <div id="authMessage" class="auth-message" aria-live="polite"></div>
         <p class="auth-note">用户名支持字母、数字、点、下划线和短横线；密码至少 8 位。</p>
+        <p class="auth-note"><a href="/" class="auth-link">← 返回首页</a></p>
       </section>
     </main>
     <script src="/static/auth.js"></script>

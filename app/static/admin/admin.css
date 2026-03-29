@@ -1,10 +1,10 @@
 .admin-badge {
-  background: rgba(124, 58, 237, 0.12);
+  background: rgba(107, 31, 204, 0.12);
   color: var(--accent-strong);
 }
 
 .admin-submit {
-  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  background: linear-gradient(135deg, #6B1FCC, #5917AD);
 }
 
 .admin-shell {
@@ -23,6 +23,18 @@
   background: rgba(255,255,255,0.95);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(10px);
+}
+
+.admin-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-topbar-logo {
+  height: 28px;
+  width: auto;
+  flex-shrink: 0;
 }
 
 .admin-topbar h1 {
@@ -213,8 +225,8 @@
 .admin-form-row input:focus,
 .admin-form-row select:focus {
   outline: none;
-  border-color: rgba(124, 58, 237, 0.4);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.08);
+  border-color: rgba(107, 31, 204, 0.4);
+  box-shadow: 0 0 0 3px rgba(107, 31, 204, 0.08);
 }
 
 .admin-form-row input.mc-api-base-input {
@@ -344,8 +356,8 @@
 
 .mc-extra-params-input:focus {
   outline: none;
-  border-color: rgba(124, 58, 237, 0.4);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.08);
+  border-color: rgba(107, 31, 204, 0.4);
+  box-shadow: 0 0 0 3px rgba(107, 31, 204, 0.08);
 }
 
 .admin-models-header {
@@ -432,8 +444,8 @@
 
 .admin-model-row input:focus {
   outline: none;
-  border-color: rgba(124, 58, 237, 0.4);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.08);
+  border-color: rgba(107, 31, 204, 0.4);
+  box-shadow: 0 0 0 3px rgba(107, 31, 204, 0.08);
 }
 
 /* 管理后台登录页：常驻说明（与 URL ?error= 无关） */
@@ -443,8 +455,8 @@
   font-size: 12px;
   line-height: 1.55;
   color: var(--muted);
-  background: rgba(124, 58, 237, 0.06);
-  border: 1px solid rgba(124, 58, 237, 0.2);
+  background: rgba(107, 31, 204, 0.06);
+  border: 1px solid rgba(107, 31, 204, 0.2);
   border-radius: 12px;
 }
 .admin-login-callout code {

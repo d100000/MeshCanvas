@@ -69,7 +69,7 @@ async function submitAuth(form, endpoint) {
       button.classList.add('success');
     }
     setMessage('');
-    window.location.href = '/';
+    window.location.href = '/app';
   } catch {
     setSubmitting(form, false);
     setMessage('网络异常，请稍后重试。', 'error');
@@ -96,7 +96,7 @@ fetch('/api/auth/session', { credentials: 'same-origin' })
   .then((response) => response.json())
   .then((payload) => {
     if (payload.authenticated) {
-      window.location.href = '/';
+      window.location.href = '/app';
     }
   })
   .catch((err) => { console.error('[auth] session check failed', err); });

@@ -75,7 +75,7 @@ setupForm.addEventListener('submit', async (event) => {
       return;
     }
     setMessage('配置成功！正在跳转到注册页面...', 'success');
-    setTimeout(() => { window.location.href = '/'; }, 600);
+    setTimeout(() => { window.location.href = '/login'; }, 600);
   } catch {
     setMessage('网络异常，请稍后重试。', 'error');
   } finally {

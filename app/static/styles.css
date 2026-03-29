@@ -10,13 +10,13 @@
   --text: #202123;
   --muted: #6b7280;
   --border: #e5e7eb;
-  --accent: #8b5cf6;
-  --accent-strong: #7c3aed;
+  --accent: #7B26E8;
+  --accent-strong: #6B1FCC;
   --green: #059669;
   --red: #dc2626;
   --edge: rgba(99, 102, 241, 0.24);
-  --edge-branch: rgba(139, 92, 246, 0.45);
-  --edge-highlight: rgba(124, 58, 237, 0.92);
+  --edge-branch: rgba(123, 38, 232, 0.45);
+  --edge-highlight: rgba(107, 31, 204, 0.92);
   --shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
   --radius: 20px;
 }
@@ -66,6 +66,18 @@ button {
   background: rgba(255, 255, 255, 0.9);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(10px);
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-logo {
+  height: 32px;
+  width: auto;
+  flex-shrink: 0;
 }
 
 .topbar-left h1 {
@@ -171,7 +183,7 @@ button {
 
 .canvas-item.active {
   color: rgb(12, 140, 108);
-  background: rgba(16, 163, 127, 0.06);
+  background: rgba(123, 38, 232, 0.06);
   font-weight: 500;
 }
 
@@ -224,7 +236,7 @@ button {
 }
 
 .canvas-new-btn:hover {
-  border-color: rgba(16, 163, 127, 0.5);
+  border-color: rgba(123, 38, 232, 0.5);
   color: rgb(12, 140, 108);
 }
 
@@ -262,7 +274,7 @@ button {
 
 .status.busy {
   background: var(--surface-accent);
-  border-color: rgba(139, 92, 246, 0.2);
+  border-color: rgba(123, 38, 232, 0.2);
   color: var(--accent-strong);
 }
 
@@ -308,8 +320,8 @@ button {
 .selection-box {
   position: absolute;
   z-index: 5;
-  border: 1px solid rgba(16, 163, 127, 0.65);
-  background: rgba(16, 163, 127, 0.12);
+  border: 1px solid rgba(123, 38, 232, 0.65);
+  background: rgba(123, 38, 232, 0.12);
   border-radius: 14px;
   pointer-events: none;
 }
@@ -340,7 +352,7 @@ button {
   right: 8px;
   padding: 2px 8px;
   border-radius: 99px;
-  background: rgba(16, 163, 127, 0.85);
+  background: rgba(123, 38, 232, 0.85);
   color: #fff;
   font-size: 11px;
   font-weight: 500;
@@ -428,8 +440,8 @@ button {
 .minimap-node {
   position: absolute;
   border-radius: 4px;
-  border: 1px solid rgba(124, 58, 237, 0.25);
-  background: rgba(124, 58, 237, 0.12);
+  border: 1px solid rgba(107, 31, 204, 0.25);
+  background: rgba(107, 31, 204, 0.12);
 }
 
 .minimap-node.user {
@@ -438,18 +450,18 @@ button {
 }
 
 .minimap-node.active {
-  background: rgba(124, 58, 237, 0.22);
-  border-color: rgba(124, 58, 237, 0.55);
+  background: rgba(107, 31, 204, 0.22);
+  border-color: rgba(107, 31, 204, 0.55);
 }
 
 .minimap-node.running {
-  box-shadow: 0 0 0 1px rgba(16, 163, 127, 0.55);
+  box-shadow: 0 0 0 1px rgba(123, 38, 232, 0.55);
 }
 
 .minimap-viewport {
-  border: 2px solid rgba(16, 163, 127, 0.55);
+  border: 2px solid rgba(123, 38, 232, 0.55);
   border-radius: 6px;
-  background: rgba(16, 163, 127, 0.06);
+  background: rgba(123, 38, 232, 0.06);
   cursor: pointer;
 }
 
@@ -475,17 +487,17 @@ button {
 }
 
 .node.cluster-running {
-  box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.12), 0 16px 42px rgba(124, 58, 237, 0.12);
+  box-shadow: 0 0 0 1px rgba(107, 31, 204, 0.12), 0 16px 42px rgba(107, 31, 204, 0.12);
 }
 
 .node.active {
-  border-color: rgba(124, 58, 237, 0.42);
-  box-shadow: 0 18px 42px rgba(124, 58, 237, 0.14);
+  border-color: rgba(107, 31, 204, 0.42);
+  box-shadow: 0 18px 42px rgba(107, 31, 204, 0.14);
 }
 
 .node.selected {
-  border-color: rgba(16, 163, 127, 0.72);
-  box-shadow: 0 0 0 2px rgba(16, 163, 127, 0.16), 0 18px 40px rgba(16, 163, 127, 0.18);
+  border-color: rgba(123, 38, 232, 0.72);
+  box-shadow: 0 0 0 2px rgba(123, 38, 232, 0.16), 0 18px 40px rgba(123, 38, 232, 0.18);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(240, 253, 250, 0.98) 100%);
   transform: translateY(-2px);
 }
@@ -548,7 +560,7 @@ button {
 }
 
 .user-node .node-header {
-  background: rgba(139, 92, 246, 0.06);
+  background: rgba(123, 38, 232, 0.06);
 }
 
 .user-content {
@@ -569,8 +581,8 @@ button {
 }
 
 .info-chip.branch-origin {
-  border-color: rgba(124, 58, 237, 0.28);
-  background: rgba(124, 58, 237, 0.08);
+  border-color: rgba(107, 31, 204, 0.28);
+  background: rgba(107, 31, 204, 0.08);
   color: var(--accent-strong);
 }
 
@@ -654,7 +666,7 @@ button {
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(124, 58, 237, 0.04);
+  background: rgba(107, 31, 204, 0.04);
 }
 
 .outline-list {
@@ -668,7 +680,7 @@ button {
   padding: 8px 10px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(107, 31, 204, 0.1);
 }
 
 .outline-item strong {
@@ -749,7 +761,7 @@ button {
 
 .tab-btn.active {
   background: var(--surface-accent);
-  border-color: rgba(139, 92, 246, 0.3);
+  border-color: rgba(123, 38, 232, 0.3);
   color: var(--accent-strong);
 }
 
@@ -783,7 +795,7 @@ button {
 .turn-summary-chip {
   padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(124, 58, 237, 0.08);
+  background: rgba(107, 31, 204, 0.08);
   color: var(--accent-strong);
   font-size: 11px;
 }
@@ -817,8 +829,8 @@ button {
 .md blockquote {
   margin: 0 0 12px;
   padding: 10px 12px;
-  border-left: 3px solid rgba(139, 92, 246, 0.3);
-  background: rgba(139, 92, 246, 0.05);
+  border-left: 3px solid rgba(123, 38, 232, 0.3);
+  background: rgba(123, 38, 232, 0.05);
   color: #374151;
 }
 
@@ -917,8 +929,8 @@ button {
 
 .branch-input:focus {
   outline: none;
-  border-color: rgba(139, 92, 246, 0.34);
-  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.1);
+  border-color: rgba(123, 38, 232, 0.34);
+  box-shadow: 0 0 0 4px rgba(123, 38, 232, 0.1);
 }
 
 .branch-controls {
@@ -996,8 +1008,8 @@ button {
 
 .selection-summary-count {
   color: rgb(12, 140, 108);
-  border-color: rgba(16, 163, 127, 0.18);
-  background: rgba(16, 163, 127, 0.08);
+  border-color: rgba(123, 38, 232, 0.18);
+  background: rgba(123, 38, 232, 0.08);
 }
 
 .selection-summary-text {
@@ -1009,8 +1021,8 @@ button {
 
 .selection-summary.loading .selection-summary-model {
   color: var(--accent-strong);
-  border-color: rgba(124, 58, 237, 0.18);
-  background: rgba(124, 58, 237, 0.08);
+  border-color: rgba(107, 31, 204, 0.18);
+  background: rgba(107, 31, 204, 0.08);
 }
 
 .selection-summary.error .selection-summary-model {
@@ -1026,8 +1038,8 @@ button {
   height: 26px;
   padding: 0 6px 0 10px;
   border-radius: 999px;
-  background: rgba(16, 163, 127, 0.1);
-  border: 1px solid rgba(16, 163, 127, 0.35);
+  background: rgba(123, 38, 232, 0.1);
+  border: 1px solid rgba(123, 38, 232, 0.35);
   color: rgb(12, 140, 108);
   font-size: 12px;
   white-space: nowrap;
@@ -1052,7 +1064,7 @@ button {
 }
 
 .chip-close:hover {
-  background: rgba(16, 163, 127, 0.25);
+  background: rgba(123, 38, 232, 0.25);
   opacity: 1;
 }
 
@@ -1071,7 +1083,7 @@ button {
 }
 
 .chips-clear:hover {
-  border-color: rgba(16, 163, 127, 0.5);
+  border-color: rgba(123, 38, 232, 0.5);
   color: rgb(12, 140, 108);
 }
 
@@ -1107,14 +1119,14 @@ button {
 
 .mode-pill {
   color: var(--accent-strong);
-  border-color: rgba(124, 58, 237, 0.18);
-  background: rgba(124, 58, 237, 0.06);
+  border-color: rgba(107, 31, 204, 0.18);
+  background: rgba(107, 31, 204, 0.06);
 }
 
 .save-status.ok {
   color: rgb(12, 140, 108);
-  border-color: rgba(16, 163, 127, 0.18);
-  background: rgba(16, 163, 127, 0.08);
+  border-color: rgba(123, 38, 232, 0.18);
+  background: rgba(123, 38, 232, 0.08);
 }
 
 .save-status.pending {
@@ -1190,20 +1202,20 @@ textarea {
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: rgba(139, 92, 246, 0.34);
-  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.1);
+  border-color: rgba(123, 38, 232, 0.34);
+  box-shadow: 0 0 0 4px rgba(123, 38, 232, 0.1);
 }
 
 .composer.has-selection textarea {
-  border-color: rgba(16, 163, 127, 0.45);
-  box-shadow: 0 0 0 4px rgba(16, 163, 127, 0.08);
+  border-color: rgba(123, 38, 232, 0.45);
+  box-shadow: 0 0 0 4px rgba(123, 38, 232, 0.08);
 }
 
 .primary-btn {
   min-height: 46px;
   border: 0;
   border-radius: 14px;
-  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  background: linear-gradient(135deg, #7B26E8, #6B1FCC);
   color: #ffffff;
   font-weight: 650;
 }
@@ -1274,7 +1286,7 @@ a.auth-link {
   min-height: 100vh;
   margin: 0;
   background:
-    radial-gradient(circle at top left, rgba(16, 163, 127, 0.12), transparent 34%),
+    radial-gradient(circle at top left, rgba(123, 38, 232, 0.12), transparent 34%),
     radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 28%),
     linear-gradient(180deg, #f5f7fb 0%, #eef2f7 100%);
 }
@@ -1300,6 +1312,12 @@ a.auth-link {
   margin-bottom: 20px;
 }
 
+.auth-logo {
+  height: 48px;
+  width: auto;
+  margin-bottom: 6px;
+}
+
 .auth-brand h1 {
   margin: 10px 0 10px;
   font-size: 28px;
@@ -1318,8 +1336,8 @@ a.auth-link {
   align-items: center;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(16, 163, 127, 0.1);
-  color: #0f766e;
+  background: rgba(123, 38, 232, 0.1);
+  color: #6B1FCC;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -1384,8 +1402,8 @@ a.auth-link {
 
 .auth-field input:focus {
   outline: none;
-  border-color: rgba(16, 163, 127, 0.48);
-  box-shadow: 0 0 0 4px rgba(16, 163, 127, 0.12);
+  border-color: rgba(123, 38, 232, 0.48);
+  box-shadow: 0 0 0 4px rgba(123, 38, 232, 0.12);
 }
 
 .auth-submit {
@@ -1457,7 +1475,7 @@ a.auth-link {
 }
 
 .auth-message.pending {
-  color: #0f766e;
+  color: #6B1FCC;
 }
 
 .auth-message.success {
@@ -1489,8 +1507,8 @@ a.auth-link {
 
 .auth-field select:focus {
   outline: none;
-  border-color: rgba(16, 163, 127, 0.48);
-  box-shadow: 0 0 0 4px rgba(16, 163, 127, 0.12);
+  border-color: rgba(123, 38, 232, 0.48);
+  box-shadow: 0 0 0 4px rgba(123, 38, 232, 0.12);
 }
 
 .setup-card {
@@ -1549,8 +1567,8 @@ a.auth-link {
 
 .setup-model-row input:focus {
   outline: none;
-  border-color: rgba(16, 163, 127, 0.48);
-  box-shadow: 0 0 0 4px rgba(16, 163, 127, 0.12);
+  border-color: rgba(123, 38, 232, 0.48);
+  box-shadow: 0 0 0 4px rgba(123, 38, 232, 0.12);
 }
 
 .model-remove-btn {
@@ -1665,8 +1683,8 @@ a.tool-btn {
   height: 34px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid rgba(16, 163, 127, 0.25);
-  background: rgba(16, 163, 127, 0.06);
+  border: 1px solid rgba(123, 38, 232, 0.25);
+  background: rgba(123, 38, 232, 0.06);
   color: rgb(12, 140, 108);
   font-size: 12px;
   font-weight: 600;
@@ -1817,8 +1835,8 @@ a.tool-btn {
 
 .settings-label input:focus {
   outline: none;
-  border-color: rgba(124, 58, 237, 0.4);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.08);
+  border-color: rgba(107, 31, 204, 0.4);
+  box-shadow: 0 0 0 3px rgba(107, 31, 204, 0.08);
 }
 
 .settings-msg {
@@ -1864,8 +1882,8 @@ a.tool-btn {
   padding: 10px 14px;
   margin-bottom: 12px;
   border-radius: 10px;
-  background: rgba(124, 58, 237, 0.06);
-  border: 1px solid rgba(124, 58, 237, 0.18);
+  background: rgba(107, 31, 204, 0.06);
+  border: 1px solid rgba(107, 31, 204, 0.18);
   font-size: 13px;
   color: var(--accent-strong);
 }
@@ -1932,8 +1950,8 @@ a.tool-btn {
 
 .settings-model-key-input:focus {
   outline: none;
-  border-color: rgba(124, 58, 237, 0.4);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.08);
+  border-color: rgba(107, 31, 204, 0.4);
+  box-shadow: 0 0 0 3px rgba(107, 31, 204, 0.08);
 }
 
 .settings-readonly-note {
@@ -1959,12 +1977,12 @@ a.tool-btn {
 
 .conclusion-node {
   width: 520px;
-  border: 1.5px solid rgba(16, 163, 127, 0.35);
+  border: 1.5px solid rgba(123, 38, 232, 0.35);
   background: rgba(255, 255, 255, 0.98);
 }
 
 .conclusion-header {
-  background: linear-gradient(135deg, rgba(16, 163, 127, 0.08), rgba(16, 163, 127, 0.02));
+  background: linear-gradient(135deg, rgba(123, 38, 232, 0.08), rgba(123, 38, 232, 0.02));
 }
 
 .conclusion-dot {
@@ -1976,7 +1994,7 @@ a.tool-btn {
 }
 
 .conclusion-badge.ok {
-  background: rgba(16, 163, 127, 0.12);
+  background: rgba(123, 38, 232, 0.12);
   color: rgb(12, 140, 108);
 }
 
@@ -2004,8 +2022,8 @@ a.tool-btn {
 }
 
 .conclusion-actions .small-btn.active {
-  background: rgba(16, 163, 127, 0.1);
-  border-color: rgba(16, 163, 127, 0.3);
+  background: rgba(123, 38, 232, 0.1);
+  border-color: rgba(123, 38, 232, 0.3);
   color: rgb(12, 140, 108);
 }
 
@@ -2025,7 +2043,7 @@ a.tool-btn {
   font-weight: 500;
   padding: 2px 10px;
   border-radius: 999px;
-  background: rgba(16, 163, 127, 0.08);
-  border: 1px solid rgba(16, 163, 127, 0.2);
+  background: rgba(123, 38, 232, 0.08);
+  border: 1px solid rgba(123, 38, 232, 0.2);
   white-space: nowrap;
 }

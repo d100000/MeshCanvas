@@ -42,6 +42,38 @@ class RateLimiter:
             del self._buckets[k]
 
 
+_CSP_COMMON = [
+    "default-src 'self'",
+    "img-src 'self' data:",
+    "media-src 'self' data:",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+]
+
+# 严格策略：用于画布、登录、设置、管理后台等页面
+STRICT_CSP = "; ".join(
+    _CSP_COMMON
+    + [
+        "style-src 'self'",
+        "script-src 'self'",
+        "connect-src 'self' ws: wss:",
+        "font-src 'self' data:",
+    ]
+)
+
+# Landing page 策略：允许 Google Fonts 外部加载 + 内联样式（HTML style 属性）
+LANDING_CSP = "; ".join(
+    _CSP_COMMON
+    + [
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "script-src 'self'",
+        "connect-src 'self'",
+        "font-src 'self' data: https://fonts.gstatic.com",
+    ]
+)
+
+
 def build_security_headers() -> dict[str, str]:
     return {
         "X-Content-Type-Options": "nosniff",
@@ -49,18 +81,5 @@ def build_security_headers() -> dict[str, str]:
         "X-Frame-Options": "DENY",
         "Cross-Origin-Opener-Policy": "same-origin",
         "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-        "Content-Security-Policy": "; ".join(
-            [
-                "default-src 'self'",
-                "img-src 'self' data:",
-                "media-src 'self' data:",
-                "style-src 'self'",
-                "script-src 'self'",
-                "connect-src 'self' ws: wss:",
-                "font-src 'self' data:",
-                "base-uri 'self'",
-                "form-action 'self'",
-                "frame-ancestors 'none'",
-            ]
-        ),
+        "Content-Security-Policy": STRICT_CSP,
     }

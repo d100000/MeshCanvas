@@ -5,15 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>管理后台 · NanoBob</title>
   <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="/static/admin/admin.css?v=20260320-cspfix2" />
 </head>
 <body>
   <div class="admin-shell">
     <header class="admin-topbar">
-      <h1>管理后台</h1>
+      <div class="admin-topbar-left">
+        <img src="/static/logo.svg" alt="NanoBob" class="admin-topbar-logo" />
+        <h1>管理后台</h1>
+      </div>
       <div class="admin-topbar-right">
-        <a href="/" class="tool-btn">用户端</a>
+        <a href="/app" class="tool-btn">用户端</a>
         <button id="adminLogoutBtn" class="tool-btn">退出</button>
       </div>
     </header>
