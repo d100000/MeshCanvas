@@ -28,6 +28,17 @@
           <span>密码</span>
           <input name="password" type="password" autocomplete="current-password" required />
         </label>
+        <div class="auth-captcha">
+          <label class="auth-field">
+            <span class="captcha-label">验证码：<strong class="captcha-question" data-captcha-q>@@CAPTCHA_QUESTION@@</strong><button type="button" class="captcha-refresh" data-captcha-refresh title="换一道题">&#x21bb;</button></span>
+            <input name="captcha_answer" type="text" inputmode="numeric" maxlength="6" autocomplete="off" required placeholder="请输入计算结果" />
+          </label>
+          <input type="hidden" name="captcha_token" data-captcha-token value="@@CAPTCHA_TOKEN@@" />
+        </div>
+        <!-- honeypot -->
+        <div class="auth-hp" aria-hidden="true">
+          <input name="website" tabindex="-1" autocomplete="off" />
+        </div>
         <button type="submit" class="primary-btn auth-submit admin-submit">登录管理后台</button>
       </form>
       <div class="admin-login-callout" role="note">

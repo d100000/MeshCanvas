@@ -34,6 +34,17 @@
               <span>密码</span>
               <input name="password" type="password" autocomplete="current-password" maxlength="128" required />
             </label>
+            <div class="auth-captcha">
+              <label class="auth-field">
+                <span class="captcha-label">验证码：<strong class="captcha-question" data-captcha-q></strong><button type="button" class="captcha-refresh" data-captcha-refresh title="换一道题">&#x21bb;</button></span>
+                <input name="captcha_answer" type="text" inputmode="numeric" maxlength="6" autocomplete="off" required placeholder="请输入计算结果" />
+              </label>
+              <input type="hidden" name="captcha_token" data-captcha-token />
+            </div>
+            <!-- honeypot: invisible to humans, bots auto-fill -->
+            <div class="auth-hp" aria-hidden="true">
+              <input name="website" tabindex="-1" autocomplete="off" />
+            </div>
             <button type="submit" class="primary-btn auth-submit">登录</button>
           </form>
 
@@ -46,6 +57,17 @@
               <span>密码</span>
               <input name="password" type="password" autocomplete="new-password" maxlength="128" required />
             </label>
+            <div class="auth-captcha">
+              <label class="auth-field">
+                <span class="captcha-label">验证码：<strong class="captcha-question" data-captcha-q></strong><button type="button" class="captcha-refresh" data-captcha-refresh title="换一道题">&#x21bb;</button></span>
+                <input name="captcha_answer" type="text" inputmode="numeric" maxlength="6" autocomplete="off" required placeholder="请输入计算结果" />
+              </label>
+              <input type="hidden" name="captcha_token" data-captcha-token />
+            </div>
+            <!-- honeypot -->
+            <div class="auth-hp" aria-hidden="true">
+              <input name="website" tabindex="-1" autocomplete="off" />
+            </div>
             <button type="submit" class="primary-btn auth-submit">注册并进入</button>
           </form>
         </section>

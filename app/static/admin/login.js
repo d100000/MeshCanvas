@@ -11,6 +11,7 @@
     forbidden: '该账号没有管理员权限，请使用具备 admin 角色的账号。',
     invalid: '用户名或密码格式不符合要求。',
     rate: '登录尝试过于频繁，请稍后再试。',
+    captcha: '验证码错误或已过期，请重新计算后提交。',
     form:
       '无法解析登录表单（请 pip install -e . 安装依赖并重启；排除扩展/代理改写 POST；默认表单不依赖 multipart）。',
     server:
@@ -47,10 +48,33 @@
     }
   }
 
+  /* ---- Captcha refresh ---- */
+  function refreshCaptcha() {
+    fetch('/api/captcha')
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        var qEl = form.querySelector('[data-captcha-q]');
+        var tEl = form.querySelector('[data-captcha-token]');
+        if (qEl) qEl.textContent = data.question;
+        if (tEl) tEl.value = data.token;
+        var ans = form.querySelector('[name="captcha_answer"]');
+        if (ans) ans.value = '';
+      })
+      .catch(function () { /* ignore */ });
+  }
+
+  var refreshBtn = form.querySelector('[data-captcha-refresh]');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      refreshCaptcha();
+    });
+  }
+
   initFromUrl();
 
   form.addEventListener('submit', function () {
-    const btn = form.querySelector('button[type="submit"]');
+    var btn = form.querySelector('button[type="submit"]');
     if (!btn) return;
     btn.disabled = true;
     btn.innerHTML = '<span class="auth-spinner"></span>登录中';

@@ -38,12 +38,53 @@ function switchTab(name) {
   setMessage('');
 }
 
+/* ---- Captcha ---- */
+
+async function loadCaptcha(form) {
+  try {
+    const res = await fetch('/api/captcha');
+    const data = await res.json();
+    const qEl = form.querySelector('[data-captcha-q]');
+    const tEl = form.querySelector('[data-captcha-token]');
+    if (qEl) qEl.textContent = data.question;
+    if (tEl) tEl.value = data.token;
+    const ansInput = form.querySelector('[name="captcha_answer"]');
+    if (ansInput) ansInput.value = '';
+  } catch {
+    /* ignore – the server-side check will reject anyway */
+  }
+}
+
+function loadAllCaptchas() {
+  loadCaptcha(loginForm);
+  loadCaptcha(registerForm);
+}
+
+// Refresh buttons
+for (const btn of document.querySelectorAll('[data-captcha-refresh]')) {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const form = btn.closest('form');
+    if (form) loadCaptcha(form);
+  });
+}
+
+/* ---- Submit ---- */
+
 async function submitAuth(form, endpoint) {
   const formData = new FormData(form);
   const username = String(formData.get('username') || '').trim();
   const password = String(formData.get('password') || '');
+  const captchaAnswer = String(formData.get('captcha_answer') || '').trim();
+  const captchaToken = String(formData.get('captcha_token') || '');
+  const website = String(formData.get('website') || '');
+
   if (!username || !password) {
     setMessage('请填写完整的用户名和密码。', 'error');
+    return;
+  }
+  if (!captchaAnswer) {
+    setMessage('请输入验证码计算结果。', 'error');
     return;
   }
 
@@ -53,13 +94,15 @@ async function submitAuth(form, endpoint) {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, captcha_answer: captchaAnswer, captcha_token: captchaToken, website }),
       credentials: 'same-origin',
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       setSubmitting(form, false);
       setMessage(payload.detail || '操作失败，请稍后重试。', 'error');
+      // Refresh captcha on failure
+      loadCaptcha(form);
       return;
     }
     const button = form.querySelector('button[type="submit"]');
@@ -73,6 +116,7 @@ async function submitAuth(form, endpoint) {
   } catch {
     setSubmitting(form, false);
     setMessage('网络异常，请稍后重试。', 'error');
+    loadCaptcha(form);
   }
 }
 
@@ -91,6 +135,7 @@ registerForm.addEventListener('submit', async (event) => {
 });
 
 switchTab('login');
+loadAllCaptchas();
 
 fetch('/api/auth/session', { credentials: 'same-origin' })
   .then((response) => response.json())

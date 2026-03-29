@@ -25,6 +25,7 @@ from app.config import get_settings, is_configured, save_settings
 from app.database import LocalDatabase
 from app.request_logger import RequestLogger
 from app.search_service import FirecrawlSearchService, SearchBundle, SearchItem
+from app.captcha import generate as captcha_generate, verify as captcha_verify, check_honeypot
 from app.security import RateLimiter, build_security_headers, LANDING_CSP
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ _ADMIN_LOGIN_ERR_TEXT: dict[str, str] = {
     "forbidden": "该账号没有管理员权限，请使用具备 admin 角色的账号。",
     "invalid": "用户名或密码格式不符合要求。",
     "rate": "登录尝试过于频繁，请稍后再试。",
+    "captcha": "验证码错误或已过期，请重新计算后提交。",
     "origin": "非法来源，请从本站页面发起登录请求。",
     "form": (
         "无法解析登录表单（请求体损坏、使用了 multipart 上传但未安装 python-multipart、或被代理/扩展改写）。"
@@ -87,15 +89,20 @@ def _render_admin_login_html(request: Request) -> str:
     body_esc = escape(" ".join(parts) if parts else "")
     username_attr = f' value="{escape(u_prefill, quote=True)}"' if u_prefill else ""
 
+    # Generate captcha for the admin login form
+    cap_question, cap_token = captcha_generate()
+
     raw = ADMIN_LOGIN_TEMPLATE_PATH.read_text(encoding="utf-8")
     # 严格校验占位符存在，避免静默错位
-    for placeholder in ("@@ADMIN_MSG_CLASS@@", "@@ADMIN_MSG_BODY@@", "@@USERNAME_ATTR@@"):
+    for placeholder in ("@@ADMIN_MSG_CLASS@@", "@@ADMIN_MSG_BODY@@", "@@USERNAME_ATTR@@", "@@CAPTCHA_QUESTION@@", "@@CAPTCHA_TOKEN@@"):
         if placeholder not in raw:
             logger.error("admin login template missing placeholder: %s", placeholder)
     return (
         raw.replace("@@ADMIN_MSG_CLASS@@", extra_class)
         .replace("@@ADMIN_MSG_BODY@@", body_esc)
         .replace("@@USERNAME_ATTR@@", username_attr)
+        .replace("@@CAPTCHA_QUESTION@@", escape(cap_question))
+        .replace("@@CAPTCHA_TOKEN@@", escape(cap_token, quote=True))
     )
 request_logger = RequestLogger()
 # 注入 DB 回调，让 EventBus 可以同时写 request_events
@@ -535,36 +542,32 @@ def _emit_admin_audit(
     _t.add_done_callback(_http_log_tasks.discard)
 
 
-async def _read_admin_session_login_form(request: Request) -> tuple[str, str]:
-    """读取管理后台登录用户名/密码。
+async def _read_admin_session_login_form(request: Request) -> dict[str, str]:
+    """读取管理后台登录表单全部字段（username / password / captcha 等）。
 
     默认 HTML 表单为 ``application/x-www-form-urlencoded``：用标准库 ``parse_qs`` 解析 ``body``，
     **不依赖 python-multipart**。仅当为 multipart 等类型时才调用 ``request.form()``。
     """
+    _FIELDS = ("username", "password", "captcha_token", "captcha_answer", "website")
+
     body = await request.body()
     main = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
 
+    def _from_qs(q: dict) -> dict[str, str]:
+        return {k: str((q.get(k) or [""])[0]).strip() if k != "password" else str((q.get(k) or [""])[0]) for k in _FIELDS}
+
     if main == "application/x-www-form-urlencoded":
         q = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True, max_num_fields=100)
-        return (
-            str((q.get("username") or [""])[0]).strip(),
-            str((q.get("password") or [""])[0]),
-        )
+        return _from_qs(q)
 
     if main == "" and body and not body.lstrip().startswith(b"--"):
         q = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True, max_num_fields=100)
         if "username" in q or "password" in q:
-            return (
-                str((q.get("username") or [""])[0]).strip(),
-                str((q.get("password") or [""])[0]),
-            )
+            return _from_qs(q)
 
     # multipart 等：body 已缓存，Starlette 的 form() 可继续解析
     form = await request.form()
-    return (
-        str(form.get("username") or "").strip(),
-        str(form.get("password") or ""),
-    )
+    return {k: str(form.get(k) or "").strip() if k != "password" else str(form.get(k) or "") for k in _FIELDS}
 
 
 def _request_is_https(request: Request) -> bool:
@@ -1300,6 +1303,13 @@ async def delete_user_custom_api_key_api(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+@app.get("/api/captcha")
+async def get_captcha() -> JSONResponse:
+    """Generate a new arithmetic CAPTCHA challenge."""
+    question, token = captcha_generate()
+    return JSONResponse({"question": question, "token": token})
+
+
 @app.get("/login")
 async def login_page(request: Request):
     if not is_configured():
@@ -1333,6 +1343,13 @@ async def register(request: Request) -> JSONResponse:
 
     try:
         payload = await _parse_json_body(request)
+        # --- captcha / honeypot ---
+        if check_honeypot(payload.get("website")):
+            return JSONResponse({"detail": "请求异常。"}, status_code=400)
+        cap_err = captcha_verify(str(payload.get("captcha_token", "")), str(payload.get("captcha_answer", "")))
+        if cap_err:
+            return JSONResponse({"detail": cap_err}, status_code=400)
+        # --- end captcha ---
         username = str(payload.get("username", ""))
         password = str(payload.get("password", ""))
         user, token, _ = await auth_manager.register(username, password)
@@ -1380,6 +1397,13 @@ async def login(request: Request) -> JSONResponse:
     username = ""
     try:
         payload = await _parse_json_body(request)
+        # --- captcha / honeypot ---
+        if check_honeypot(payload.get("website")):
+            return JSONResponse({"detail": "请求异常。"}, status_code=400)
+        cap_err = captcha_verify(str(payload.get("captcha_token", "")), str(payload.get("captcha_answer", "")))
+        if cap_err:
+            return JSONResponse({"detail": cap_err}, status_code=400)
+        # --- end captcha ---
         username = str(payload.get("username", ""))
         password = str(payload.get("password", ""))
         user, token, _ = await auth_manager.login(username, password)
@@ -1775,10 +1799,21 @@ async def admin_session_login(request: Request) -> Response:
         )
         return RedirectResponse(url="/admin?error=rate", status_code=303)
     try:
-        username, password = await _read_admin_session_login_form(request)
+        form_data = await _read_admin_session_login_form(request)
     except Exception:
         logger.exception("admin session-login: failed to read form body")
         return RedirectResponse(url="/admin?error=form", status_code=303)
+
+    username = form_data.get("username", "")
+    password = form_data.get("password", "")
+
+    # --- captcha / honeypot ---
+    if check_honeypot(form_data.get("website")):
+        return RedirectResponse(url="/admin?error=badcreds", status_code=303)
+    cap_err = captcha_verify(form_data.get("captcha_token", ""), form_data.get("captcha_answer", ""))
+    if cap_err:
+        return RedirectResponse(url="/admin?error=captcha", status_code=303)
+    # --- end captcha ---
 
     try:
         _user_info, token, _ = await auth_manager.admin_login(username, password)
@@ -1831,6 +1866,13 @@ async def admin_login(request: Request) -> JSONResponse:
     username = ""
     try:
         payload = await _parse_json_body(request)
+        # --- captcha / honeypot ---
+        if check_honeypot(payload.get("website")):
+            return JSONResponse({"detail": "请求异常。"}, status_code=400)
+        cap_err = captcha_verify(str(payload.get("captcha_token", "")), str(payload.get("captcha_answer", "")))
+        if cap_err:
+            return JSONResponse({"detail": cap_err}, status_code=400)
+        # --- end captcha ---
         username = str(payload.get("username", ""))
         password = str(payload.get("password", ""))
         user_info, token, _ = await auth_manager.admin_login(username, password)
