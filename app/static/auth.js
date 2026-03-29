@@ -26,7 +26,10 @@ function setSubmitting(form, isSubmitting) {
   }
 }
 
+let registrationAllowed = true;
+
 function switchTab(name) {
+  if (name === 'register' && !registrationAllowed) return;
   for (const tab of authTabs) {
     const active = tab.dataset.authTab === name;
     tab.classList.toggle('active', active);
@@ -36,6 +39,23 @@ function switchTab(name) {
     panel.classList.toggle('hidden', panel.dataset.authPanel !== name);
   }
   setMessage('');
+}
+
+function applyRegistrationStatus(allow) {
+  registrationAllowed = allow;
+  const regTab = authTabs.find((t) => t.dataset.authTab === 'register');
+  if (!regTab) return;
+  if (!allow) {
+    regTab.classList.add('disabled');
+    regTab.setAttribute('aria-disabled', 'true');
+    regTab.title = '暂未开放注册';
+    // If currently on register tab, switch back to login
+    if (regTab.classList.contains('active')) switchTab('login');
+  } else {
+    regTab.classList.remove('disabled');
+    regTab.removeAttribute('aria-disabled');
+    regTab.title = '';
+  }
 }
 
 /* ---- Captcha ---- */
@@ -145,3 +165,8 @@ fetch('/api/auth/session', { credentials: 'same-origin' })
     }
   })
   .catch((err) => { console.error('[auth] session check failed', err); });
+
+fetch('/api/auth/registration-status')
+  .then((r) => r.json())
+  .then((d) => applyRegistrationStatus(d.allow))
+  .catch(() => {});

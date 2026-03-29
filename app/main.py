@@ -1328,6 +1328,14 @@ async def auth_session(request: Request) -> JSONResponse:
     return JSONResponse({"authenticated": True, "username": user["username"]})
 
 
+@app.get("/api/auth/registration-status")
+async def registration_status() -> JSONResponse:
+    """Return whether new-user registration is currently allowed."""
+    cfg = await database.get_system_config()
+    allow = cfg.get("config_allow_registration", "true") != "false"
+    return JSONResponse({"allow": allow})
+
+
 @app.post("/api/auth/register")
 async def register(request: Request) -> JSONResponse:
     client_host = request.client.host if request.client else "unknown"
