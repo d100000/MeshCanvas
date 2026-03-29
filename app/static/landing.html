@@ -9,6 +9,19 @@
 </head>
 <body>
 
+    <!-- 固定背景网格 -->
+    <div class="landing-grid-bg"></div>
+
+    <!-- 云彩层 -->
+    <div class="landing-clouds">
+        <div class="lc lc-1"><div class="lc-body"><span></span></div></div>
+        <div class="lc lc-2"><div class="lc-body"><span></span></div></div>
+        <div class="lc lc-3"><div class="lc-body"><span></span></div></div>
+        <div class="lc lc-4"><div class="lc-body"><span></span></div></div>
+        <div class="lc lc-5"><div class="lc-body"><span></span></div></div>
+        <div class="lc lc-6"><div class="lc-body"><span></span></div></div>
+    </div>
+
     <!-- 顶部导航 -->
     <nav class="fixed top-0 w-full z-50 glass-nav pointer-events-auto">
         <div class="max-w-7xl mx-auto px-4 md:px-6 h-[64px] md:h-[72px] flex items-center justify-between">
@@ -87,7 +100,7 @@
 
                 <div class="absolute -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[320px] node-card shadow-2xl shadow-blue-900/5 z-20" style="left: -400px; top: 480px;">
                     <div class="model-tag bg-blue-50 text-blue-600 border border-blue-100">
-                        <div class="w-2 h-2 rounded-full bg-blue-500"></div> OpenAI GPT-4o
+                        <div class="w-2 h-2 rounded-full bg-blue-500"></div> GPT
                     </div>
                     <div class="text-[14px] text-[#444] leading-relaxed">RAG（检索增强生成）是主流。通过将私有数据向量化，模型在生成前检索外部知识库，将「闭卷考试」变为「开卷考试」，有效降低幻觉。</div>
                 </div>
@@ -95,14 +108,14 @@
                 <div class="absolute -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[340px] node-card shadow-2xl border-[#7B26E8] shadow-[#7B26E8]/15 scale-[1.05] z-30" style="left: 0px; top: 450px;">
                     <div class="absolute -top-3 -right-2 bg-[#7B26E8] text-white text-[11px] font-bold px-3 py-1 rounded-lg shadow-md">最优对齐方案</div>
                     <div class="model-tag bg-emerald-50 text-emerald-600 border border-emerald-100">
-                        <div class="w-2 h-2 rounded-full bg-emerald-500"></div> Anthropic Claude 3.5
+                        <div class="w-2 h-2 rounded-full bg-emerald-500"></div> Claude
                     </div>
                     <div class="text-[14px] text-[#444] leading-relaxed">从微调角度，RLHF 能够对齐人类偏好。但在严谨领域，基于 Constitutional AI 设定明确边界更有效，赋予模型「拒绝回答」与「承认不知」的能力。</div>
                 </div>
 
                 <div class="absolute -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[320px] node-card shadow-2xl shadow-blue-900/5 z-20" style="left: 400px; top: 480px;">
                     <div class="model-tag bg-purple-50 text-purple-600 border border-purple-100">
-                        <div class="w-2 h-2 rounded-full bg-purple-500"></div> DeepSeek V3
+                        <div class="w-2 h-2 rounded-full bg-purple-500"></div> Deepseek
                     </div>
                     <div class="text-[14px] text-[#444] leading-relaxed">引入多 Agent 交叉验证机制。让生成器模型输出草稿，再由独立的验证器模型调用外部代码解释器进行逻辑和事实核对，最终输出高置信结果。</div>
                 </div>
@@ -168,10 +181,13 @@
                     <div class="col-span-1 md:col-span-2 bg-white/80 backdrop-blur-xl border border-[#EAEAEA] rounded-[24px] p-6 md:p-8 shadow-[0_20px_40px_rgba(0,0,0,0.03)]">
                         <div class="text-[12px] md:text-sm font-bold text-[#888] mb-4 md:mb-6 tracking-widest uppercase">支持的模型矩阵</div>
                         <div class="flex flex-wrap gap-3 md:gap-4">
-                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-blue-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">GPT-4o</span></div>
-                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-emerald-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">Claude 3.5</span></div>
-                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-purple-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">DeepSeek V3</span></div>
-                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-orange-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">Firecrawl</span></div>
+                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-blue-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">GPT</span></div>
+                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-emerald-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">Claude</span></div>
+                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-cyan-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">Kimi</span></div>
+                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-sky-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">GLM</span></div>
+                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-pink-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">Minimax</span></div>
+                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-purple-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">Deepseek</span></div>
+                            <div class="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#FAFAFA] border border-[#EAEAEA] rounded-xl"><div class="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full bg-orange-500"></div><span class="font-bold text-[13px] md:text-[15px] text-[#333]">Qwen</span></div>
                         </div>
                         <div class="mt-6 md:mt-8 pt-5 md:pt-6 border-t border-[#EAEAEA]">
                             <div class="flex items-center justify-between">

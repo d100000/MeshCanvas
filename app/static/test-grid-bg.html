@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>背景网格 + 云彩动效测试</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&display=swap');
+
+        :root {
+            --bg-color: #FAFAFA;
+            --accent: #7B26E8;
+            --accent-light: #A96BF0;
+            --text-main: #111111;
+            --border: rgba(0, 0, 0, 0.08);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Noto Sans SC', sans-serif;
+            min-height: 100vh;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── 静止网格背景 ── */
+        .grid-bg {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(123, 38, 232, 0.10) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(123, 38, 232, 0.10) 1px, transparent 1px);
+            background-size: 60px 60px;
+        }
+
+        /* ── 云彩层：云从左至右（或反向）穿越屏幕 ── */
+        .clouds {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        /* 云彩本体：多个模糊椭圆叠合成有机形状 */
+        .cloud {
+            position: absolute;
+            pointer-events: none;
+            will-change: transform;
+        }
+
+        /* 每朵云由 3 个子椭圆叠合 */
+        .cloud-body {
+            position: relative;
+        }
+        .cloud-body::before,
+        .cloud-body::after,
+        .cloud-body > span {
+            content: '';
+            display: block;
+            position: absolute;
+            border-radius: 50%;
+            background: radial-gradient(ellipse, rgba(169, 107, 240, 0.22) 0%, rgba(123, 38, 232, 0.10) 50%, transparent 80%);
+            filter: blur(28px);
+        }
+
+        /* 云 1：大、慢，从左到右，上方 */
+        @keyframes cloud1 {
+            0%   { transform: translateX(-700px) translateY(0px); }
+            40%  { transform: translateX(40vw)   translateY(-18px); }
+            70%  { transform: translateX(70vw)   translateY(8px); }
+            100% { transform: translateX(calc(100vw + 700px)) translateY(0px); }
+        }
+        .cloud-1 { animation: cloud1 90s ease-in-out infinite; animation-delay: 0s; top: 8vh; }
+        .cloud-1 .cloud-body { width: 480px; height: 160px; }
+        .cloud-1 .cloud-body::before { width: 300px; height: 160px; top: 0; left: 0; }
+        .cloud-1 .cloud-body::after  { width: 260px; height: 130px; top: 10px; left: 160px; }
+        .cloud-1 .cloud-body > span  { width: 180px; height: 100px; top: 20px; left: 320px; }
+
+        /* 云 2：中等，稍快，从右到左，中间偏上 */
+        @keyframes cloud2 {
+            0%   { transform: translateX(calc(100vw + 500px)) translateY(0px); }
+            35%  { transform: translateX(55vw)  translateY(14px); }
+            65%  { transform: translateX(25vw)  translateY(-10px); }
+            100% { transform: translateX(-500px) translateY(0px); }
+        }
+        .cloud-2 { animation: cloud2 75s ease-in-out infinite; animation-delay: -28s; top: 20vh; }
+        .cloud-2 .cloud-body { width: 360px; height: 120px; }
+        .cloud-2 .cloud-body::before { width: 220px; height: 120px; top: 0; left: 0; }
+        .cloud-2 .cloud-body::after  { width: 200px; height: 100px; top: 8px; left: 120px; }
+        .cloud-2 .cloud-body > span  { width: 130px; height: 80px; top: 15px; left: 240px; }
+
+        /* 云 3：细长，从左到右，靠近中部 */
+        @keyframes cloud3 {
+            0%   { transform: translateX(-600px) translateY(0px); }
+            50%  { transform: translateX(50vw)   translateY(22px); }
+            100% { transform: translateX(calc(100vw + 600px)) translateY(5px); }
+        }
+        .cloud-3 { animation: cloud3 110s ease-in-out infinite; animation-delay: -50s; top: 35vh; }
+        .cloud-3 .cloud-body { width: 520px; height: 100px; }
+        .cloud-3 .cloud-body::before { width: 280px; height: 100px; top: 0; left: 0; filter: blur(35px); background: radial-gradient(ellipse, rgba(123, 38, 232, 0.14) 0%, transparent 75%); }
+        .cloud-3 .cloud-body::after  { width: 240px; height: 90px; top: 5px; left: 200px; filter: blur(30px); background: radial-gradient(ellipse, rgba(169, 107, 240, 0.12) 0%, transparent 75%); }
+        .cloud-3 .cloud-body > span  { width: 160px; height: 70px; top: 12px; left: 380px; filter: blur(25px); background: radial-gradient(ellipse, rgba(123, 38, 232, 0.10) 0%, transparent 75%); }
+
+        /* 云 4：偏下方，从右到左，淡 */
+        @keyframes cloud4 {
+            0%   { transform: translateX(calc(100vw + 400px)) translateY(0px); }
+            45%  { transform: translateX(45vw)  translateY(-16px); }
+            100% { transform: translateX(-400px) translateY(4px); }
+        }
+        .cloud-4 { animation: cloud4 85s ease-in-out infinite; animation-delay: -15s; top: 55vh; }
+        .cloud-4 .cloud-body { width: 300px; height: 90px; }
+        .cloud-4 .cloud-body::before { width: 190px; height: 90px; top: 0; left: 0; filter: blur(22px); background: radial-gradient(ellipse, rgba(169, 107, 240, 0.16) 0%, transparent 75%); }
+        .cloud-4 .cloud-body::after  { width: 160px; height: 75px; top: 6px; left: 110px; filter: blur(20px); background: radial-gradient(ellipse, rgba(123, 38, 232, 0.12) 0%, transparent 75%); }
+        .cloud-4 .cloud-body > span  { width: 100px; height: 60px; top: 14px; left: 210px; filter: blur(18px); background: radial-gradient(ellipse, rgba(169, 107, 240, 0.09) 0%, transparent 75%); }
+
+        /* 云 5：底部大云，很慢，从左到右 */
+        @keyframes cloud5 {
+            0%   { transform: translateX(-800px) translateY(0px); }
+            30%  { transform: translateX(30vw)   translateY(-12px); }
+            70%  { transform: translateX(70vw)   translateY(10px); }
+            100% { transform: translateX(calc(100vw + 800px)) translateY(0px); }
+        }
+        .cloud-5 { animation: cloud5 130s ease-in-out infinite; animation-delay: -70s; top: 72vh; }
+        .cloud-5 .cloud-body { width: 600px; height: 140px; }
+        .cloud-5 .cloud-body::before { width: 380px; height: 140px; top: 0; left: 0; filter: blur(40px); background: radial-gradient(ellipse, rgba(123, 38, 232, 0.13) 0%, transparent 75%); }
+        .cloud-5 .cloud-body::after  { width: 300px; height: 120px; top: 8px; left: 240px; filter: blur(38px); background: radial-gradient(ellipse, rgba(169, 107, 240, 0.10) 0%, transparent 75%); }
+        .cloud-5 .cloud-body > span  { width: 200px; height: 90px; top: 18px; left: 420px; filter: blur(32px); background: radial-gradient(ellipse, rgba(123, 38, 232, 0.08) 0%, transparent 75%); }
+
+        /* 云 6：快速小云，中上，从左到右 */
+        @keyframes cloud6 {
+            0%   { transform: translateX(-300px) translateY(0px); }
+            100% { transform: translateX(calc(100vw + 300px)) translateY(-8px); }
+        }
+        .cloud-6 { animation: cloud6 55s linear infinite; animation-delay: -22s; top: 14vh; }
+        .cloud-6 .cloud-body { width: 220px; height: 70px; }
+        .cloud-6 .cloud-body::before { width: 140px; height: 70px; top: 0; left: 0; filter: blur(18px); background: radial-gradient(ellipse, rgba(169, 107, 240, 0.18) 0%, transparent 75%); }
+        .cloud-6 .cloud-body::after  { width: 110px; height: 60px; top: 5px; left: 90px; filter: blur(15px); background: radial-gradient(ellipse, rgba(123, 38, 232, 0.14) 0%, transparent 75%); }
+        .cloud-6 .cloud-body > span  { width: 80px; height: 50px; top: 10px; left: 160px; filter: blur(14px); background: radial-gradient(ellipse, rgba(169, 107, 240, 0.10) 0%, transparent 75%); }
+
+        /* ── 内容层 ── */
+        .content {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 40px;
+            text-align: center;
+            gap: 32px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.85);
+            border: 1px solid var(--border);
+            font-size: 12px;
+            font-weight: 700;
+            color: #333;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .badge-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--accent);
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse { 50% { opacity: 0.4; } }
+
+        h1 {
+            font-size: clamp(36px, 6vw, 72px);
+            font-weight: 900;
+            line-height: 1.1;
+            letter-spacing: -0.025em;
+            color: var(--text-main);
+        }
+        .text-gradient {
+            background: linear-gradient(135deg, var(--accent), var(--accent-light));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        p {
+            font-size: 18px;
+            color: #666;
+            max-width: 520px;
+            line-height: 1.7;
+            font-weight: 500;
+        }
+
+        .demo-cards {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .node-card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(24px);
+            border: 1px solid rgba(255,255,255,1);
+            border-radius: 16px;
+            padding: 18px 22px;
+            box-shadow: 0 20px 40px -10px rgba(0,0,0,0.05), 0 0 0 1px var(--border);
+            text-align: left;
+            width: 200px;
+            font-size: 13px;
+            color: #444;
+        }
+        .model-tag {
+            font-size: 11px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 10px;
+            color: var(--accent);
+        }
+        .model-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+        /* 控制面板 */
+        .controls {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 100;
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px 20px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #888;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+            min-width: 280px;
+        }
+        .controls-title { color: #333; font-size: 13px; margin-bottom: 2px; }
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .toggle-row span:first-child { min-width: 80px; }
+        .toggle-row span:last-child { min-width: 36px; text-align: right; }
+        input[type=range] { flex: 1; accent-color: var(--accent); }
+    </style>
+</head>
+<body>
+
+    <!-- 静止网格 -->
+    <div class="grid-bg" id="gridBg"></div>
+
+    <!-- 云彩层 -->
+    <div class="clouds">
+        <div class="cloud cloud-1"><div class="cloud-body"><span></span></div></div>
+        <div class="cloud cloud-2"><div class="cloud-body"><span></span></div></div>
+        <div class="cloud cloud-3"><div class="cloud-body"><span></span></div></div>
+        <div class="cloud cloud-4"><div class="cloud-body"><span></span></div></div>
+        <div class="cloud cloud-5"><div class="cloud-body"><span></span></div></div>
+        <div class="cloud cloud-6"><div class="cloud-body"><span></span></div></div>
+    </div>
+
+    <!-- 内容层 -->
+    <div class="content">
+        <div class="badge">
+            <div class="badge-dot"></div>
+            背景网格 + 云彩动效测试
+        </div>
+
+        <h1>
+            超越线性的局限<br>
+            思考，<span class="text-gradient">在画布上流淌</span>
+        </h1>
+
+        <p>摒弃传统的聊天框体验。NanoBob 让多模型并发推演与深度辩证在您的屏幕上如星图般展开。</p>
+
+        <div class="demo-cards">
+            <div class="node-card">
+                <div class="model-tag">
+                    <div class="model-dot" style="background:#3b82f6"></div> GPT
+                </div>
+                RAG 检索增强是主流方向，将私有数据向量化后实时召回。
+            </div>
+            <div class="node-card" style="border-color: rgba(123,38,232,0.3); box-shadow: 0 20px 40px rgba(123,38,232,0.10), 0 0 0 1.5px rgba(123,38,232,0.3);">
+                <div class="model-tag">
+                    <div class="model-dot" style="background:#10b981"></div> Claude
+                </div>
+                Constitutional AI 赋予模型承认不知的能力，边界更清晰。
+            </div>
+            <div class="node-card">
+                <div class="model-tag">
+                    <div class="model-dot" style="background:#a855f7"></div> Deepseek
+                </div>
+                多 Agent 交叉验证机制，独立验证器进行逻辑核查。
+            </div>
+        </div>
+    </div>
+
+    <!-- 调节面板 -->
+    <div class="controls">
+        <div class="controls-title">调节参数</div>
+        <div class="toggle-row">
+            <span>网格透明度</span>
+            <input type="range" id="gridOpacity" min="0" max="25" value="10"
+                oninput="setGridOpacity(this.value)">
+            <span id="gridOpacityVal">10%</span>
+        </div>
+        <div class="toggle-row">
+            <span>云彩透明度</span>
+            <input type="range" id="cloudOpacity" min="0" max="100" value="100"
+                oninput="setCloudOpacity(this.value)">
+            <span id="cloudOpacityVal">100%</span>
+        </div>
+        <div class="toggle-row">
+            <span>云彩速度</span>
+            <input type="range" id="cloudSpeed" min="30" max="200" value="100"
+                oninput="setCloudSpeed(this.value)">
+            <span id="cloudSpeedVal">1×</span>
+        </div>
+    </div>
+
+    <script>
+        const gridBg = document.getElementById('gridBg');
+        const clouds = document.querySelector('.clouds');
+
+        // 记录各云的基础动画时长
+        const baseDurations = { 1: 90, 2: 75, 3: 110, 4: 85, 5: 130, 6: 55 };
+        let speedMultiplier = 1;
+
+        function setGridOpacity(val) {
+            document.getElementById('gridOpacityVal').textContent = val + '%';
+            const v = val / 100;
+            gridBg.style.backgroundImage = `
+                linear-gradient(rgba(123,38,232,${v}) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(123,38,232,${v}) 1px, transparent 1px)
+            `;
+        }
+
+        function setCloudOpacity(val) {
+            document.getElementById('cloudOpacityVal').textContent = val + '%';
+            clouds.style.opacity = val / 100;
+        }
+
+        function setCloudSpeed(val) {
+            // val: 30=慢, 100=原速, 200=快
+            speedMultiplier = val / 100;
+            const label = speedMultiplier.toFixed(1) + '×';
+            document.getElementById('cloudSpeedVal').textContent = label;
+            document.querySelectorAll('.cloud').forEach((el, i) => {
+                const idx = i + 1;
+                const newDur = baseDurations[idx] / speedMultiplier;
+                el.style.animationDuration = newDur + 's';
+            });
+        }
+    </script>
+</body>
+</html>

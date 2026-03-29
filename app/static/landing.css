@@ -92,3 +92,106 @@ body::-webkit-scrollbar { display: none; }
     100% { transform: translateY(15px); opacity: 0; }
 }
 .mouse-wheel { animation: mouseScroll 1.5s infinite; }
+
+/* ── 固定背景网格（5% 透明度，静止） ── */
+.landing-grid-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+        linear-gradient(rgba(123, 38, 232, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(123, 38, 232, 0.05) 1px, transparent 1px);
+    background-size: 60px 60px;
+}
+
+/* ── 云彩层（z-index 在网格之上，画布之下） ── */
+.landing-clouds {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    overflow: hidden;
+}
+.lc { position: absolute; pointer-events: none; will-change: transform; }
+.lc-body { position: relative; }
+.lc-body::before, .lc-body::after, .lc-body > span {
+    content: '';
+    display: block;
+    position: absolute;
+    border-radius: 50%;
+}
+
+/* 云 1：大慢，左→右，上方，60s */
+@keyframes lc1 {
+    0%   { transform: translateX(-700px) translateY(0px); }
+    40%  { transform: translateX(40vw)   translateY(-18px); }
+    70%  { transform: translateX(70vw)   translateY(8px); }
+    100% { transform: translateX(calc(100vw + 700px)) translateY(0px); }
+}
+.lc-1 { animation: lc1 60s ease-in-out infinite; animation-delay: 0s; top: 8vh; }
+.lc-1 .lc-body { width: 480px; height: 160px; }
+.lc-1 .lc-body::before { width: 300px; height: 160px; top: 0; left: 0;   filter: blur(28px); background: radial-gradient(ellipse, rgba(169,107,240,0.22) 0%, rgba(123,38,232,0.10) 50%, transparent 80%); }
+.lc-1 .lc-body::after  { width: 260px; height: 130px; top: 10px; left: 160px; filter: blur(28px); background: radial-gradient(ellipse, rgba(169,107,240,0.22) 0%, rgba(123,38,232,0.10) 50%, transparent 80%); }
+.lc-1 .lc-body > span  { width: 180px; height: 100px; top: 20px; left: 320px; filter: blur(28px); background: radial-gradient(ellipse, rgba(169,107,240,0.22) 0%, rgba(123,38,232,0.10) 50%, transparent 80%); }
+
+/* 云 2：中等，右→左，中上，50s */
+@keyframes lc2 {
+    0%   { transform: translateX(calc(100vw + 500px)) translateY(0px); }
+    35%  { transform: translateX(55vw)  translateY(14px); }
+    65%  { transform: translateX(25vw)  translateY(-10px); }
+    100% { transform: translateX(-500px) translateY(0px); }
+}
+.lc-2 { animation: lc2 50s ease-in-out infinite; animation-delay: -18s; top: 20vh; }
+.lc-2 .lc-body { width: 360px; height: 120px; }
+.lc-2 .lc-body::before { width: 220px; height: 120px; top: 0; left: 0;   filter: blur(28px); background: radial-gradient(ellipse, rgba(169,107,240,0.22) 0%, rgba(123,38,232,0.10) 50%, transparent 80%); }
+.lc-2 .lc-body::after  { width: 200px; height: 100px; top: 8px; left: 120px; filter: blur(28px); background: radial-gradient(ellipse, rgba(169,107,240,0.22) 0%, rgba(123,38,232,0.10) 50%, transparent 80%); }
+.lc-2 .lc-body > span  { width: 130px; height: 80px;  top: 15px; left: 240px; filter: blur(28px); background: radial-gradient(ellipse, rgba(169,107,240,0.22) 0%, rgba(123,38,232,0.10) 50%, transparent 80%); }
+
+/* 云 3：细长，左→右，中部，73s */
+@keyframes lc3 {
+    0%   { transform: translateX(-600px) translateY(0px); }
+    50%  { transform: translateX(50vw)   translateY(22px); }
+    100% { transform: translateX(calc(100vw + 600px)) translateY(5px); }
+}
+.lc-3 { animation: lc3 73s ease-in-out infinite; animation-delay: -33s; top: 35vh; }
+.lc-3 .lc-body { width: 520px; height: 100px; }
+.lc-3 .lc-body::before { width: 280px; height: 100px; top: 0; left: 0;   filter: blur(35px); background: radial-gradient(ellipse, rgba(123,38,232,0.14) 0%, transparent 75%); }
+.lc-3 .lc-body::after  { width: 240px; height: 90px;  top: 5px; left: 200px; filter: blur(30px); background: radial-gradient(ellipse, rgba(169,107,240,0.12) 0%, transparent 75%); }
+.lc-3 .lc-body > span  { width: 160px; height: 70px;  top: 12px; left: 380px; filter: blur(25px); background: radial-gradient(ellipse, rgba(123,38,232,0.10) 0%, transparent 75%); }
+
+/* 云 4：偏下，右→左，57s */
+@keyframes lc4 {
+    0%   { transform: translateX(calc(100vw + 400px)) translateY(0px); }
+    45%  { transform: translateX(45vw)  translateY(-16px); }
+    100% { transform: translateX(-400px) translateY(4px); }
+}
+.lc-4 { animation: lc4 57s ease-in-out infinite; animation-delay: -10s; top: 55vh; }
+.lc-4 .lc-body { width: 300px; height: 90px; }
+.lc-4 .lc-body::before { width: 190px; height: 90px;  top: 0; left: 0;   filter: blur(22px); background: radial-gradient(ellipse, rgba(169,107,240,0.16) 0%, transparent 75%); }
+.lc-4 .lc-body::after  { width: 160px; height: 75px;  top: 6px; left: 110px; filter: blur(20px); background: radial-gradient(ellipse, rgba(123,38,232,0.12) 0%, transparent 75%); }
+.lc-4 .lc-body > span  { width: 100px; height: 60px;  top: 14px; left: 210px; filter: blur(18px); background: radial-gradient(ellipse, rgba(169,107,240,0.09) 0%, transparent 75%); }
+
+/* 云 5：底部大云，左→右，87s */
+@keyframes lc5 {
+    0%   { transform: translateX(-800px) translateY(0px); }
+    30%  { transform: translateX(30vw)   translateY(-12px); }
+    70%  { transform: translateX(70vw)   translateY(10px); }
+    100% { transform: translateX(calc(100vw + 800px)) translateY(0px); }
+}
+.lc-5 { animation: lc5 87s ease-in-out infinite; animation-delay: -47s; top: 72vh; }
+.lc-5 .lc-body { width: 600px; height: 140px; }
+.lc-5 .lc-body::before { width: 380px; height: 140px; top: 0; left: 0;   filter: blur(40px); background: radial-gradient(ellipse, rgba(123,38,232,0.13) 0%, transparent 75%); }
+.lc-5 .lc-body::after  { width: 300px; height: 120px; top: 8px; left: 240px; filter: blur(38px); background: radial-gradient(ellipse, rgba(169,107,240,0.10) 0%, transparent 75%); }
+.lc-5 .lc-body > span  { width: 200px; height: 90px;  top: 18px; left: 420px; filter: blur(32px); background: radial-gradient(ellipse, rgba(123,38,232,0.08) 0%, transparent 75%); }
+
+/* 云 6：小快云，左→右，中上，37s */
+@keyframes lc6 {
+    0%   { transform: translateX(-300px) translateY(0px); }
+    100% { transform: translateX(calc(100vw + 300px)) translateY(-8px); }
+}
+.lc-6 { animation: lc6 37s linear infinite; animation-delay: -14s; top: 14vh; }
+.lc-6 .lc-body { width: 220px; height: 70px; }
+.lc-6 .lc-body::before { width: 140px; height: 70px;  top: 0; left: 0;   filter: blur(18px); background: radial-gradient(ellipse, rgba(169,107,240,0.18) 0%, transparent 75%); }
+.lc-6 .lc-body::after  { width: 110px; height: 60px;  top: 5px; left: 90px; filter: blur(15px); background: radial-gradient(ellipse, rgba(123,38,232,0.14) 0%, transparent 75%); }
+.lc-6 .lc-body > span  { width: 80px;  height: 50px;  top: 10px; left: 160px; filter: blur(14px); background: radial-gradient(ellipse, rgba(169,107,240,0.10) 0%, transparent 75%); }
