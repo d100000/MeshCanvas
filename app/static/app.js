@@ -265,7 +265,7 @@ function queueSelectionSummaryRefresh() {
     return;
   }
   selectionSummaryTimer = window.setTimeout(() => {
-    refreshSelectionSummary();
+    refreshSelectionSummary().catch(() => {});
   }, 180);
 }
 
@@ -324,7 +324,7 @@ async function refreshSelectionSummary() {
     selectionSummaryState.count = Number(data.count || count) || count;
     selectionSummaryState.error = '';
   } catch (error) {
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted || error?.name === 'AbortError') return;
     selectionSummaryState.text = '';
     selectionSummaryState.error = error instanceof Error ? error.message : '总结失败';
   } finally {
@@ -969,7 +969,7 @@ function handleEvent(payload) {
   switch (payload.type) {
     case 'meta':
       models = payload.models || [];
-      modelCount.textContent = `${models.length} 个模型`;
+      if (modelCount) modelCount.textContent = `${models.length} 个模型`;
       const wasSearchDisabled = searchToggleEl.disabled;
       if (payload.search_available === false) {
         searchToggleEl.value = 'false';
@@ -2606,9 +2606,8 @@ if (sidebarNewCanvasBtn) sidebarNewCanvasBtn.addEventListener('click', async () 
 });
 
 document.addEventListener('click', (event) => {
-  if (!event.target.closest('.node')) {
-    clearSelection();
-  }
+  if (event.target.closest('.node, .composer-shell, .sidebar, .topbar, .selection-actions, .selected-chips')) return;
+  clearSelection();
 });
 
 autoResizeComposer();

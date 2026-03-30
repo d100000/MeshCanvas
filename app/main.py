@@ -34,6 +34,16 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 ADMIN_LOGIN_TEMPLATE_PATH = BASE_DIR / "templates" / "admin_login.html"
 
+# 静态资源版本号——修改后所有页面的 CSS/JS/SVG 引用自动追加 ?v=xxx，强制浏览器刷新缓存。
+# 每次前端发版时只需更新此值即可。
+import re as _re
+ASSET_VERSION = "20260330a"
+_STATIC_RE = _re.compile(r'(/static/[^"\'?]+\.(css|js|svg|png|ico))(\?v=[^"\']*)?')
+
+def _inject_asset_version(html: str) -> str:
+    """给 HTML 中所有 /static/ 资源引用追加 ?v=ASSET_VERSION。"""
+    return _STATIC_RE.sub(rf'\1?v={ASSET_VERSION}', html)
+
 _ADMIN_LOGIN_ERR_TEXT: dict[str, str] = {
     "badcreds": "用户名或密码错误。",
     "forbidden": "该账号没有管理员权限，请使用具备 admin 角色的账号。",
@@ -97,13 +107,14 @@ def _render_admin_login_html(request: Request) -> str:
     for placeholder in ("@@ADMIN_MSG_CLASS@@", "@@ADMIN_MSG_BODY@@", "@@USERNAME_ATTR@@", "@@CAPTCHA_QUESTION@@", "@@CAPTCHA_TOKEN@@"):
         if placeholder not in raw:
             logger.error("admin login template missing placeholder: %s", placeholder)
-    return (
+    result = (
         raw.replace("@@ADMIN_MSG_CLASS@@", extra_class)
         .replace("@@ADMIN_MSG_BODY@@", body_esc)
         .replace("@@USERNAME_ATTR@@", username_attr)
         .replace("@@CAPTCHA_QUESTION@@", escape(cap_question))
         .replace("@@CAPTCHA_TOKEN@@", escape(cap_token, quote=True))
     )
+    return _inject_asset_version(result)
 request_logger = RequestLogger()
 # 注入 DB 回调，让 EventBus 可以同时写 request_events
 # 延迟赋值（database 在其后声明），startup 中完成绑定
@@ -1070,10 +1081,10 @@ async def _load_user_settings_or_error(request: Request) -> tuple[dict | None, d
     return user, gs, None
 
 
-def _html_response(path: Path) -> FileResponse:
-    resp = FileResponse(path)
-    resp.headers["Cache-Control"] = "no-store"
-    return resp
+def _html_response(path: Path) -> HTMLResponse:
+    html = path.read_text(encoding="utf-8")
+    html = _inject_asset_version(html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/")

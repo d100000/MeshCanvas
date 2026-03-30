@@ -4,6 +4,11 @@ Three layers of bot protection:
 1. Arithmetic challenge (addition / multiplication, result ≤ 100)
 2. Honeypot hidden field (bots auto-fill, humans don't see it)
 3. Minimum submission time (token must be ≥ 2 s old)
+
+Security: the correct answer is NOT embedded in the token. The token
+contains only ``timestamp|nonce|hmac``. During verification the server
+rebuilds the HMAC using the user-supplied answer and checks it matches,
+so an attacker cannot extract the answer from the token.
 """
 
 from __future__ import annotations
@@ -36,7 +41,7 @@ def generate() -> tuple[str, str]:
         a, b = random.randint(1, 50), random.randint(1, 49)
         answer = a + b
     else:
-        a, b = random.randint(2, 12), random.randint(2, 9)
+        a, b = random.randint(2, 10), random.randint(2, 9)
         answer = a * b
     question = f"{a} {op} {b} = ?"
     token = _make_token(answer)
@@ -47,25 +52,22 @@ def verify(token: str, user_answer: str) -> str | None:
     """Return *None* on success, or an error message string on failure."""
     try:
         parts = token.split("|")
-        if len(parts) != 4:
+        if len(parts) != 3:
             return "验证码无效，请刷新重试。"
-        correct_str, ts_str, _nonce, sig = parts
+        ts_str, nonce, sig = parts
 
-        # Signature check
-        payload = f"{correct_str}|{ts_str}|{_nonce}"
-        expected = hmac.new(_SECRET, payload.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            return "验证码无效，请刷新重试。"
-
-        # Expiry
+        # Expiry (check before HMAC to give clear error messages)
         age = time.time() - int(ts_str)
         if age > MAX_AGE:
             return "验证码已过期，请刷新重试。"
         if age < MIN_AGE:
             return "提交过快，请稍后再试。"
 
-        # Answer
-        if int(user_answer.strip()) != int(correct_str):
+        # Rebuild HMAC with user-supplied answer and verify
+        answer_str = str(int(user_answer.strip()))
+        payload = f"{answer_str}|{ts_str}|{nonce}"
+        expected = hmac.new(_SECRET, payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
             return "验证码答案错误。"
 
     except (ValueError, TypeError, AttributeError):
@@ -84,8 +86,10 @@ def check_honeypot(value: str | None) -> bool:
 # ------------------------------------------------------------------
 
 def _make_token(answer: int) -> str:
+    """Create an HMAC-signed token that does NOT contain the answer."""
     ts = str(int(time.time()))
     nonce = secrets.token_hex(8)
     payload = f"{answer}|{ts}|{nonce}"
     sig = hmac.new(_SECRET, payload.encode(), hashlib.sha256).hexdigest()
-    return f"{payload}|{sig}"
+    # Only return timestamp, nonce, and signature — answer stays server-side
+    return f"{ts}|{nonce}|{sig}"
