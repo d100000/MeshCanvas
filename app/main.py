@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json as _json
 import logging
 import math
@@ -2044,6 +2045,52 @@ async def admin_reset_password(request: Request) -> JSONResponse:
         target_user_id=user_id,
     )
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/admin/change-password")
+async def admin_change_password(request: Request) -> JSONResponse:
+    """管理员修改自己的密码。需要验证旧密码，成功后自动注销当前会话。"""
+    try:
+        admin = await _require_admin(request)
+    except AuthError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=401)
+    try:
+        payload = await _parse_json_body(request)
+    except AuthError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    old_password = str(payload.get("old_password", "")).strip()
+    new_password = str(payload.get("new_password", "")).strip()
+    if not old_password:
+        return JSONResponse({"detail": "请输入当前密码。"}, status_code=400)
+    if len(new_password) < 8:
+        return JSONResponse({"detail": "新密码至少需要 8 位。"}, status_code=400)
+
+    # 验证旧密码
+    user_record = await database.get_user_by_username(admin["username"])
+    if not user_record:
+        return JSONResponse({"detail": "用户不存在。"}, status_code=404)
+    expected_hash = await asyncio.to_thread(
+        AuthManager._hash_password, old_password, user_record["password_salt"]
+    )
+    if not hmac.compare_digest(expected_hash, user_record["password_hash"]):
+        return JSONResponse({"detail": "当前密码错误。"}, status_code=403)
+
+    # 更新密码
+    salt = secrets.token_hex(16)
+    password_hash = await asyncio.to_thread(AuthManager._hash_password, new_password, salt)
+    await database.update_user_password(admin["username"], password_hash, salt)
+
+    # 审计日志
+    _emit_admin_audit(
+        admin["user_id"], "change_own_password",
+    )
+
+    # 注销当前管理员会话
+    await auth_manager.logout(request.cookies.get(ADMIN_SESSION_COOKIE_NAME))
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(key=ADMIN_SESSION_COOKIE_NAME, path="/")
+    return response
 
 
 @app.get("/api/admin/pricing")

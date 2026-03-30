@@ -18,7 +18,34 @@
       </div>
       <div class="admin-topbar-right">
         <a href="/app" class="tool-btn">用户端</a>
+        <button id="adminChangePwdBtn" class="tool-btn">修改密码</button>
         <button id="adminLogoutBtn" class="tool-btn">退出</button>
+      </div>
+
+      <!-- 修改密码弹窗 -->
+      <div id="changePwdModal" class="admin-modal-overlay hidden">
+        <div class="admin-modal">
+          <div class="admin-modal-header">
+            <h3>修改管理员密码</h3>
+            <button id="changePwdClose" class="admin-modal-close">&times;</button>
+          </div>
+          <form id="changePwdForm" class="admin-modal-body">
+            <label class="admin-field-label">当前密码
+              <input type="password" id="changePwdOld" required autocomplete="current-password" />
+            </label>
+            <label class="admin-field-label">新密码（至少 8 位）
+              <input type="password" id="changePwdNew" required minlength="8" autocomplete="new-password" />
+            </label>
+            <label class="admin-field-label">确认新密码
+              <input type="password" id="changePwdConfirm" required minlength="8" autocomplete="new-password" />
+            </label>
+            <p id="changePwdMsg" class="admin-msg hidden"></p>
+            <div class="admin-modal-actions">
+              <button type="button" id="changePwdCancel" class="admin-btn">取消</button>
+              <button type="submit" id="changePwdSubmit" class="admin-btn primary">确认修改</button>
+            </div>
+          </form>
+        </div>
       </div>
     </header>
 

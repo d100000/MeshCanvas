@@ -531,6 +531,7 @@ const _AUDIT_ACTION_LABELS = {
   recharge: '积分调整',
   set_role: '角色变更',
   reset_password: '重置密码',
+  change_own_password: '修改自身密码',
   upsert_pricing: '更新定价',
   delete_pricing: '删除定价',
   update_config: '修改配置',
@@ -561,6 +562,70 @@ async function loadAuditLogs() {
 }
 
 document.getElementById('auditRefreshBtn')?.addEventListener('click', loadAuditLogs);
+
+// ── Change Password Modal ──
+(() => {
+  const modal = document.getElementById('changePwdModal');
+  const form = document.getElementById('changePwdForm');
+  const openBtn = document.getElementById('adminChangePwdBtn');
+  const closeBtn = document.getElementById('changePwdClose');
+  const cancelBtn = document.getElementById('changePwdCancel');
+  const submitBtn = document.getElementById('changePwdSubmit');
+  const msgEl = document.getElementById('changePwdMsg');
+  const oldInput = document.getElementById('changePwdOld');
+  const newInput = document.getElementById('changePwdNew');
+  const confirmInput = document.getElementById('changePwdConfirm');
+  if (!modal || !form) return;
+
+  function openModal() {
+    form.reset();
+    msgEl.textContent = '';
+    msgEl.classList.add('hidden');
+    submitBtn.disabled = false;
+    submitBtn.textContent = '确认修改';
+    modal.classList.remove('hidden');
+    oldInput.focus();
+  }
+  function closeModal() {
+    modal.classList.add('hidden');
+  }
+  function showMsg(text, isError) {
+    msgEl.textContent = text;
+    msgEl.className = isError ? 'admin-msg err' : 'admin-msg ok';
+    msgEl.classList.remove('hidden');
+  }
+
+  openBtn.addEventListener('click', openModal);
+  closeBtn.addEventListener('click', closeModal);
+  cancelBtn.addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const oldPwd = oldInput.value.trim();
+    const newPwd = newInput.value.trim();
+    const confirmPwd = confirmInput.value.trim();
+
+    if (!oldPwd) { showMsg('请输入当前密码。', true); return; }
+    if (newPwd.length < 8) { showMsg('新密码至少需要 8 位。', true); return; }
+    if (newPwd !== confirmPwd) { showMsg('两次输入的新密码不一致。', true); return; }
+    if (oldPwd === newPwd) { showMsg('新密码不能与当前密码相同。', true); return; }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = '提交中…';
+    msgEl.classList.add('hidden');
+
+    try {
+      await POST('/api/admin/change-password', { old_password: oldPwd, new_password: newPwd });
+      showMsg('密码修改成功，即将跳转到登录页…', false);
+      setTimeout(() => { window.location.href = '/admin'; }, 1500);
+    } catch (err) {
+      showMsg(err.message || '修改失败', true);
+      submitBtn.disabled = false;
+      submitBtn.textContent = '确认修改';
+    }
+  });
+})();
 
 // Initial load
 loadUsers();
