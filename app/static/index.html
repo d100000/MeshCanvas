@@ -18,25 +18,32 @@
   </head>
   <body>
     <div class="shell">
-      <header class="topbar">
-        <div class="topbar-left">
-          <img src="/static/logo.svg" alt="NanoBob" class="topbar-logo" />
-          <h1>NanoBob</h1>
-          <p>下一代 AI 工作台 · 无限画布 · 圆桌论坛</p>
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+          <img src="/static/logo.svg" alt="NanoBob" class="sidebar-logo" />
+          <span class="sidebar-title">NanoBob</span>
+          <button id="sidebarCollapseBtn" type="button" class="sidebar-collapse-btn" title="收起侧栏">◁</button>
         </div>
-
-        <div class="canvas-switcher">
-          <button id="canvasMenuBtn" type="button" class="canvas-menu-btn" title="切换画布">
-            <span class="canvas-menu-icon">▣</span>
-            <span id="currentCanvasName">加载中...</span>
-            <span class="canvas-chevron">▾</span>
-          </button>
-          <div id="canvasDropdown" class="canvas-dropdown hidden">
-            <div id="canvasList" class="canvas-list"></div>
-            <div class="canvas-dropdown-footer">
-              <button id="newCanvasBtn" type="button" class="canvas-new-btn">＋ 新建画布</button>
-            </div>
+        <div class="sidebar-canvas-section">
+          <button id="sidebarNewCanvasBtn" type="button" class="sidebar-new-canvas-btn">＋ 新建画布</button>
+          <div id="sidebarCanvasList" class="sidebar-canvas-list"></div>
+        </div>
+        <div class="sidebar-account">
+          <div class="sidebar-avatar" id="sidebarAvatar">?</div>
+          <div class="sidebar-user-info">
+            <span id="sidebarUsername" class="sidebar-username">--</span>
+            <span id="sidebarBalance" class="sidebar-balance">-- 点</span>
           </div>
+          <div class="sidebar-account-actions">
+            <a href="/settings" class="sidebar-action-btn" title="设置">&#9881;</a>
+            <button id="sidebarLogoutBtn" type="button" class="sidebar-action-btn" title="退出登录">&#9211;</button>
+          </div>
+        </div>
+      </aside>
+
+      <header class="topbar">
+        <div class="topbar-left-minimal">
+          <button id="sidebarToggleBtn" type="button" class="tool-btn sidebar-toggle-btn" title="展开侧栏">&#9776;</button>
         </div>
         <div class="topbar-right">
           <div class="zoom-tools">
@@ -44,13 +51,9 @@
             <button id="zoomResetBtn" type="button" class="tool-btn zoom-pill" title="重置缩放">100%</button>
             <button id="zoomInBtn" type="button" class="tool-btn" title="放大">＋</button>
           </div>
-          <span id="balanceDisplay" class="balance-pill" title="当前点数余额">-- 点</span>
-          <span id="modelCount" class="muted"></span>
           <span id="status" class="status">连接中...</span>
           <button id="fitBtn" type="button" class="tool-btn">回到当前对话</button>
           <button id="clearBtn" type="button" class="tool-btn">清空画布</button>
-          <a href="/settings" class="tool-btn" id="settingsBtn">账号</a>
-          <button id="logoutBtn" type="button" class="tool-btn">退出登录</button>
         </div>
       </header>
 
@@ -59,7 +62,6 @@
           <div class="canvas-grid"></div>
           <svg id="edgeLayer" class="edge-layer" aria-hidden="true"></svg>
           <div id="canvasStage" class="canvas-stage"></div>
-          <div id="selectionBox" class="selection-box hidden"><span id="selectionCount" class="selection-count hidden"></span></div>
           <div id="selectionActions" class="selection-actions hidden">
             <button id="selectionContinueBtn" type="button" class="small-btn">继续对话</button>
             <button id="selectionBranchBtn" type="button" class="small-btn">建立分支</button>
@@ -68,7 +70,6 @@
           <div id="needsSetupBanner" class="needs-setup-banner hidden">
             <span>管理员尚未完成模型配置，暂时无法使用对话功能，请联系管理员。</span>
           </div>
-          <div class="canvas-tip hidden">按住空格 + 鼠标左键可移动画布；普通左键用于框选、点击与拖动卡片。</div>
           <aside id="minimap" class="minimap">
             <div class="minimap-title">Map</div>
             <div id="minimapContent" class="minimap-content">

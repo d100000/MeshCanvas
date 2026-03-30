@@ -41,7 +41,6 @@ function getDisplayName(model) {
 const statusEl = document.getElementById('status');
 const sendBtn = document.getElementById('sendBtn');
 const clearBtn = document.getElementById('clearBtn');
-const logoutBtn = document.getElementById('logoutBtn');
 const fitBtn = document.getElementById('fitBtn');
 const zoomInBtn = document.getElementById('zoomInBtn');
 const zoomOutBtn = document.getElementById('zoomOutBtn');
@@ -58,8 +57,6 @@ const edgeLayerEl = document.getElementById('edgeLayer');
 const minimapContentEl = document.getElementById('minimapContent');
 const minimapNodesEl = document.getElementById('minimapNodes');
 const minimapViewportEl = document.getElementById('minimapViewport');
-const selectionBoxEl = document.getElementById('selectionBox');
-const selectionCountEl = document.getElementById('selectionCount');
 const selectedChipsEl = document.getElementById('selectedChips');
 const selectionSummaryEl = document.getElementById('selectionSummary');
 const selectionSummaryCountEl = document.getElementById('selectionSummaryCount');
@@ -72,19 +69,23 @@ const selectionActionsEl = document.getElementById('selectionActions');
 const selectionContinueBtn = document.getElementById('selectionContinueBtn');
 const selectionBranchBtn = document.getElementById('selectionBranchBtn');
 const selectionClearBtn = document.getElementById('selectionClearBtn');
-const canvasMenuBtn = document.getElementById('canvasMenuBtn');
-const currentCanvasNameEl = document.getElementById('currentCanvasName');
-const canvasDropdownEl = document.getElementById('canvasDropdown');
-const canvasListEl = document.getElementById('canvasList');
-const newCanvasBtn = document.getElementById('newCanvasBtn');
+const sidebarEl = document.getElementById('sidebar');
+const sidebarCollapseBtn = document.getElementById('sidebarCollapseBtn');
+const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+const sidebarCanvasListEl = document.getElementById('sidebarCanvasList');
+const sidebarNewCanvasBtn = document.getElementById('sidebarNewCanvasBtn');
+const sidebarAvatarEl = document.getElementById('sidebarAvatar');
+const sidebarUsernameEl = document.getElementById('sidebarUsername');
+const sidebarBalanceEl = document.getElementById('sidebarBalance');
+const sidebarLogoutBtn = document.getElementById('sidebarLogoutBtn');
 
 let socket;
-const balanceDisplay = document.getElementById('balanceDisplay');
 
 function updateBalanceDisplay(balance) {
-  if (!balanceDisplay) return;
-  balanceDisplay.textContent = `${balance.toFixed(1)} 点`;
-  balanceDisplay.classList.toggle('low', balance <= 10);
+  if (sidebarBalanceEl) {
+    sidebarBalanceEl.textContent = balance.toFixed(1) + ' 点';
+    sidebarBalanceEl.classList.toggle('low', balance <= 10);
+  }
 }
 
 function getSearchMode() {
@@ -95,7 +96,6 @@ function getSearchMode() {
 
 let models = [];
 let socketConnected = false;
-let spacePressed = false;
 let latestConclusionMarkdown = '';
 let latestConclusionRequestId = '';
 let conclusionAutoAttach = true;
@@ -137,11 +137,6 @@ const state = {
   dragStartY: 0,
   originNodeX: 0,
   originNodeY: 0,
-  selecting: false,
-  selectionStartX: 0,
-  selectionStartY: 0,
-  selectionCurrentX: 0,
-  selectionCurrentY: 0,
   selectionSource: 'none',
 };
 
@@ -539,22 +534,6 @@ function renderSelectedChips() {
   }
 }
 
-function countNodesInSelectionRect() {
-  const viewportRect = viewportEl.getBoundingClientRect();
-  const left = viewportRect.left + Math.min(state.selectionStartX, state.selectionCurrentX);
-  const top = viewportRect.top + Math.min(state.selectionStartY, state.selectionCurrentY);
-  const right = viewportRect.left + Math.max(state.selectionStartX, state.selectionCurrentX);
-  const bottom = viewportRect.top + Math.max(state.selectionStartY, state.selectionCurrentY);
-  let count = 0;
-  for (const node of nodes.values()) {
-    const rect = node.root.getBoundingClientRect();
-    if (!(rect.right < left || rect.left > right || rect.bottom < top || rect.top > bottom)) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
 function setClusterState(requestId, patch = {}) {
   const cluster = getCluster(requestId);
   if (!cluster) return;
@@ -579,42 +558,6 @@ function clearSelection() {
   selectedNodeIds.clear();
   state.selectionSource = 'none';
   clearSelectionSummary();
-  renderSelectionState();
-  updateComposerHint();
-}
-
-function updateSelectionBox() {
-  if (!state.selecting) {
-    selectionBoxEl.classList.add('hidden');
-    return;
-  }
-  const left = Math.min(state.selectionStartX, state.selectionCurrentX);
-  const top = Math.min(state.selectionStartY, state.selectionCurrentY);
-  const width = Math.abs(state.selectionCurrentX - state.selectionStartX);
-  const height = Math.abs(state.selectionCurrentY - state.selectionStartY);
-  selectionBoxEl.classList.remove('hidden');
-  selectionBoxEl.style.left = `${left}px`;
-  selectionBoxEl.style.top = `${top}px`;
-  selectionBoxEl.style.width = `${width}px`;
-  selectionBoxEl.style.height = `${height}px`;
-}
-
-function selectNodesInRect() {
-  const viewportRect = viewportEl.getBoundingClientRect();
-  const left = viewportRect.left + Math.min(state.selectionStartX, state.selectionCurrentX);
-  const top = viewportRect.top + Math.min(state.selectionStartY, state.selectionCurrentY);
-  const right = viewportRect.left + Math.max(state.selectionStartX, state.selectionCurrentX);
-  const bottom = viewportRect.top + Math.max(state.selectionStartY, state.selectionCurrentY);
-  selectedNodeIds.clear();
-  for (const node of nodes.values()) {
-    const rect = node.root.getBoundingClientRect();
-    const intersects = !(rect.right < left || rect.left > right || rect.bottom < top || rect.top > bottom);
-    if (intersects) {
-      selectedNodeIds.add(node.nodeId);
-    }
-  }
-  selectedNodeId = selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null;
-  state.selectionSource = selectedNodeIds.size ? 'rect' : 'none';
   renderSelectionState();
   updateComposerHint();
 }
@@ -713,17 +656,18 @@ function schedulePositionSave(requestId) {
 let _canvasListDelegated = false;
 
 function renderCanvasList() {
-  canvasListEl.innerHTML = canvasesList.map((c) => `
-    <div class="canvas-item ${c.id === currentCanvasId ? 'active' : ''}" data-id="${escapeAttribute(c.id)}">
-      <span class="canvas-item-name">${escapeHtml(c.name)}</span>
-      <button type="button" class="canvas-item-del" data-id="${escapeAttribute(c.id)}" title="删除画布">✕</button>
+  if (!sidebarCanvasListEl) return;
+  sidebarCanvasListEl.innerHTML = canvasesList.map((c) => `
+    <div class="sidebar-canvas-item ${c.id === currentCanvasId ? 'active' : ''}" data-id="${escapeAttribute(c.id)}">
+      <span class="sidebar-canvas-item-name">${escapeHtml(c.name)}</span>
+      <button type="button" class="sidebar-canvas-item-del" data-id="${escapeAttribute(c.id)}" title="删除画布">✕</button>
     </div>
   `).join('');
 
   if (!_canvasListDelegated) {
     _canvasListDelegated = true;
-    canvasListEl.addEventListener('click', async (e) => {
-      const delBtn = e.target.closest('.canvas-item-del');
+    sidebarCanvasListEl.addEventListener('click', async (e) => {
+      const delBtn = e.target.closest('.sidebar-canvas-item-del');
       if (delBtn) {
         e.stopPropagation();
         const id = delBtn.dataset.id;
@@ -742,11 +686,10 @@ function renderCanvasList() {
         }
         return;
       }
-      const item = e.target.closest('.canvas-item');
+      const item = e.target.closest('.sidebar-canvas-item');
       if (item) {
         const id = item.dataset.id;
         if (id !== currentCanvasId) {
-          canvasDropdownEl.classList.add('hidden');
           switchCanvas(id);
         }
       }
@@ -756,8 +699,6 @@ function renderCanvasList() {
 
 async function switchCanvas(canvasId) {
   currentCanvasId = canvasId;
-  const canvas = canvasesList.find((c) => c.id === canvasId);
-  if (currentCanvasNameEl) currentCanvasNameEl.textContent = canvas?.name || '画布';
   renderCanvasList();
   await loadCanvasState(canvasId);
 }
@@ -1046,6 +987,12 @@ function handleEvent(payload) {
         }
         sendBtn.disabled = Boolean(payload.needs_setup);
         if (typeof payload.balance === 'number') updateBalanceDisplay(payload.balance);
+        if (payload.username && sidebarUsernameEl) {
+          sidebarUsernameEl.textContent = payload.username;
+        }
+        if (payload.username && sidebarAvatarEl) {
+          sidebarAvatarEl.textContent = payload.username.charAt(0).toUpperCase();
+        }
         const pending = payload.pending_requests || [];
         for (const rid of pending) {
           const cluster = requestClusters.get(rid);
@@ -1798,7 +1745,7 @@ function bindNodeInteractions(root, nodeId, requestId) {
   root.addEventListener('click', (event) => {
     if (event.target.closest('button, textarea, a, input, select')) return;
     state.selectionSource = 'click';
-    if (event.metaKey || event.ctrlKey) {
+    if (event.shiftKey) {
       if (selectedNodeIds.has(nodeId)) {
         selectedNodeIds.delete(nodeId);
       } else {
@@ -2405,113 +2352,63 @@ function updateClusterBounds(requestId) {
 }
 
 function bindCanvasPan() {
-  document.addEventListener('keydown', (event) => {
-    if (event.code !== 'Space') return;
-    if (event.target.closest('input, textarea, select, button')) return;
-    spacePressed = true;
-    viewportEl.classList.add('hand-mode');
-    event.preventDefault();
-  });
-
-  document.addEventListener('keyup', (event) => {
-    if (event.code !== 'Space') return;
-    spacePressed = false;
-    viewportEl.classList.remove('hand-mode');
-  });
-
   window.addEventListener('blur', () => {
-    spacePressed = false;
     state.panning = false;
-    state.selecting = false;
-    viewportEl.classList.remove('hand-mode');
-    selectionBoxEl.classList.add('hidden');
-    selectionCountEl.classList.add('hidden');
+    viewportEl.classList.remove('panning');
   });
 
   viewportEl.addEventListener('pointerdown', (event) => {
-    if (event.target.closest('.node, .minimap')) return;
+    if (event.target.closest('.node, .minimap, .selection-actions, .needs-setup-banner')) return;
     if (event.button !== 0) return;
 
-    const rect = viewportEl.getBoundingClientRect();
-    const localX = event.clientX - rect.left;
-    const localY = event.clientY - rect.top;
-
-    if (spacePressed) {
-      state.panning = true;
-      state.panStartX = event.clientX;
-      state.panStartY = event.clientY;
-      state.originOffsetX = state.offsetX;
-      state.originOffsetY = state.offsetY;
-      viewportEl.setPointerCapture(event.pointerId);
-      return;
-    }
-
-    hoverNodeId = null;
-    state.selecting = true;
-    state.selectionStartX = localX;
-    state.selectionStartY = localY;
-    state.selectionCurrentX = localX;
-    state.selectionCurrentY = localY;
-    updateSelectionBox();
+    state.panning = true;
+    state.panStartX = event.clientX;
+    state.panStartY = event.clientY;
+    state.originOffsetX = state.offsetX;
+    state.originOffsetY = state.offsetY;
+    viewportEl.classList.add('panning');
     viewportEl.setPointerCapture(event.pointerId);
   });
 
-  let _viewportMoveRaf = null;
   viewportEl.addEventListener('pointermove', (event) => {
-    if (state.panning) {
-      state.offsetX = state.originOffsetX + (event.clientX - state.panStartX);
-      state.offsetY = state.originOffsetY + (event.clientY - state.panStartY);
-      applyTransform();
-      scheduleRenderMinimap();
-      return;
-    }
-    if (!state.selecting) return;
-    const rect = viewportEl.getBoundingClientRect();
-    state.selectionCurrentX = event.clientX - rect.left;
-    state.selectionCurrentY = event.clientY - rect.top;
-    updateSelectionBox();
-    if (!_viewportMoveRaf) {
-      _viewportMoveRaf = requestAnimationFrame(() => {
-        _viewportMoveRaf = null;
-        const liveCount = countNodesInSelectionRect();
-        selectionCountEl.textContent = liveCount > 0 ? `${liveCount} 个节点` : '';
-        selectionCountEl.classList.toggle('hidden', liveCount === 0);
-      });
-    }
+    if (!state.panning) return;
+    state.offsetX = state.originOffsetX + (event.clientX - state.panStartX);
+    state.offsetY = state.originOffsetY + (event.clientY - state.panStartY);
+    applyTransform();
+    scheduleRenderMinimap();
   });
 
-  function stopPointer(event) {
-    if (state.panning) {
-      state.panning = false;
-      viewportEl.releasePointerCapture?.(event.pointerId);
-    }
-    if (state.selecting) {
-      const moved = Math.abs(state.selectionCurrentX - state.selectionStartX) > 4 || Math.abs(state.selectionCurrentY - state.selectionStartY) > 4;
-      if (moved) {
-        selectNodesInRect();
-      } else if (!event.target.closest('.node')) {
-        clearSelection();
-      }
-      state.selecting = false;
-      selectionBoxEl.classList.add('hidden');
-      selectionBoxEl.style.width = '0px';
-      selectionBoxEl.style.height = '0px';
-      selectionCountEl.classList.add('hidden');
-      selectionCountEl.textContent = '';
-      viewportEl.releasePointerCapture?.(event.pointerId);
+  function stopPan(event) {
+    if (!state.panning) return;
+    const moved = Math.abs(event.clientX - state.panStartX) > 4 ||
+                  Math.abs(event.clientY - state.panStartY) > 4;
+    state.panning = false;
+    viewportEl.classList.remove('panning');
+    try { viewportEl.releasePointerCapture(event.pointerId); } catch (_) {}
+
+    if (!moved && !event.target.closest('.node')) {
+      clearSelection();
     }
   }
 
-  viewportEl.addEventListener('pointerup', stopPointer);
-  viewportEl.addEventListener('pointercancel', stopPointer);
+  viewportEl.addEventListener('pointerup', stopPan);
+  viewportEl.addEventListener('pointercancel', stopPan);
 
   viewportEl.addEventListener(
     'wheel',
     (event) => {
       event.preventDefault();
-      const delta = Math.sign(event.deltaY) * Math.min(Math.abs(event.deltaY), 48);
-      const factor = delta < 0 ? 1.02 : 0.98;
-      zoomAtPoint(factor, event.clientX, event.clientY);
+      if (event.ctrlKey || event.metaKey) {
+        // Pinch-to-zoom (trackpad) or Ctrl+scroll
+        const factor = event.deltaY < 0 ? 1.02 : 0.98;
+        zoomAtPoint(factor, event.clientX, event.clientY);
+      } else {
+        // Two-finger scroll = pan
+        state.offsetX -= event.deltaX;
+        state.offsetY -= event.deltaY;
+        applyTransform();
+        scheduleRenderMinimap();
+      }
     },
     { passive: false }
   );
@@ -2556,6 +2453,14 @@ function applyTransform() {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function toggleSidebar(show) {
+  const shell = document.querySelector('.shell');
+  if (typeof show !== 'boolean') show = shell.classList.contains('sidebar-collapsed');
+  shell.classList.toggle('sidebar-collapsed', !show);
+  shell.classList.toggle('sidebar-open', show);
+  document.documentElement.style.setProperty('--sidebar-width', show ? '260px' : '0px');
 }
 
 function sendMessage() {
@@ -2660,8 +2565,8 @@ clearBtn.addEventListener('click', () => {
     socket.send(JSON.stringify({ action: 'clear', canvas_id: currentCanvasId }));
   }
 });
-if (logoutBtn) {
-  logoutBtn.addEventListener('click', async () => {
+if (sidebarLogoutBtn) {
+  sidebarLogoutBtn.addEventListener('click', async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
     } finally {
@@ -2683,12 +2588,10 @@ messageInput.addEventListener('keydown', (event) => {
   }
 });
 messageInput.addEventListener('input', autoResizeComposer);
-canvasMenuBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  canvasDropdownEl.classList.toggle('hidden');
-});
+if (sidebarCollapseBtn) sidebarCollapseBtn.addEventListener('click', () => toggleSidebar(false));
+if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', () => toggleSidebar(true));
 
-newCanvasBtn.addEventListener('click', async () => {
+if (sidebarNewCanvasBtn) sidebarNewCanvasBtn.addEventListener('click', async () => {
   const name = prompt('新画布名称：', '新画布') || '新画布';
   const res = await fetch('/api/canvases', {
     method: 'POST',
@@ -2699,16 +2602,12 @@ newCanvasBtn.addEventListener('click', async () => {
   if (!res.ok) return;
   const created = await res.json();
   canvasesList.push({ id: created.canvas_id, name: created.name });
-  canvasDropdownEl.classList.add('hidden');
   await switchCanvas(created.canvas_id);
 });
 
 document.addEventListener('click', (event) => {
-  if (!event.target.closest('.node') && !state.selecting) {
+  if (!event.target.closest('.node')) {
     clearSelection();
-  }
-  if (!event.target.closest('.canvas-switcher')) {
-    canvasDropdownEl.classList.add('hidden');
   }
 });
 
