@@ -176,11 +176,14 @@ export async function refreshSelectionSummary() {
       signal: controller.signal,
       body: JSON.stringify({ bundle, count }),
     });
-    const data = await response.json().catch(() => ({}));
+    if (controller.signal.aborted) return;
+    const text = await response.text().catch(() => '');
+    if (controller.signal.aborted) return;
+    let data = {};
+    try { data = JSON.parse(text); } catch { /* ignore */ }
     if (!response.ok) {
       throw new Error(String(data?.detail || '总结请求失败'));
     }
-    if (controller.signal.aborted) return;
     selectionSummaryState.text = String(data.summary || '').trim();
     selectionSummaryState.model = String(data.model || 'Kimi-K2.5').trim() || 'Kimi-K2.5';
     selectionSummaryState.count = Number(data.count || count) || count;
@@ -350,6 +353,11 @@ export function buildContextBundleFromSelection() {
       const text = node.root.querySelector('.user-message')?.textContent?.trim() || '';
       return `[${index + 1}] 用户问题\n${text.slice(0, 800)}`;
     }
+    if (node.type === 'conclusion') {
+      const text = (node.markdown || '').trim();
+      return text ? `[${index + 1}] 总结\n${text.slice(0, 1000)}` : '';
+    }
+    if (!node.turns) return '';
     const rounds = Array.from(node.turns.keys()).sort((a, b) => a - b);
     const activeRound = node.activeRound || rounds[rounds.length - 1] || 1;
     const snippets = rounds.slice(-2).map((round) => {
@@ -358,7 +366,7 @@ export function buildContextBundleFromSelection() {
       return raw ? `第 ${round} 轮：${raw.slice(0, round === activeRound ? 1000 : 280)}` : '';
     }).filter(Boolean).join('\n');
     return `[${index + 1}] ${getDisplayName(node.model)}\n当前轮次：第 ${activeRound} 轮\n${snippets}`;
-  });
+  }).filter(Boolean);
 
   return [
     '以下内容来自 NanoBob 画布中用户当前选中的卡片，请先基于这些上下文继续思考。',

@@ -119,11 +119,15 @@ function handleEvent(payload) {
     case 'usage':
       if (typeof payload.balance === 'number') updateBalanceDisplay(payload.balance);
       break;
-    case 'user':
+    case 'user': {
       appState.latestRequestId = payload.request_id;
+      // 从队列取出原始问题（避免在用户节点展示完整上下文拼接内容）
+      const displayInfo = appState._pendingUserDisplay?.shift();
       createCluster({
         requestId: payload.request_id,
         userMessage: payload.content,
+        displayMessage: displayInfo?.displayMessage || '',
+        contextNodeCount: displayInfo?.contextNodeCount || 0,
         discussionRounds: payload.discussion_rounds || 1,
         models: payload.models || [],
         searchEnabled: Boolean(payload.search_enabled),
@@ -132,6 +136,24 @@ function handleEvent(payload) {
         sourceModel: payload.source_model || null,
         sourceRound: payload.source_round || null,
       });
+      // 为继续对话创建上下文连线（从选中节点到新用户节点）
+      if (!payload.parent_request_id && appState._pendingContextQueue?.length > 0) {
+        const contextNodeIds = appState._pendingContextQueue.shift();
+        if (contextNodeIds) {
+          const userNodeId = `user-${payload.request_id}`;
+          for (const ctxNodeId of contextNodeIds) {
+            if (nodes.has(ctxNodeId)) {
+              addEdge({
+                id: `edge-ctx-${ctxNodeId}-${userNodeId}`,
+                sourceId: ctxNodeId,
+                targetId: userNodeId,
+                type: 'context_continuation',
+              });
+            }
+          }
+          scheduleRenderEdges();
+        }
+      }
       setClusterState(payload.request_id, {
         isRunning: true,
         isCancelling: false,
@@ -140,6 +162,7 @@ function handleEvent(payload) {
       focusCluster(payload.request_id);
       flushPendingSearchEvents(payload.request_id);
       break;
+    }
     case 'search_started':
     case 'search_complete':
     case 'search_error':

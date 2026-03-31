@@ -207,6 +207,8 @@ export function createUserNode({
   x,
   y,
   content,
+  displayMessage,
+  contextNodeCount,
   discussionRounds,
   searchEnabled,
   thinkEnabled,
@@ -239,6 +241,7 @@ export function createUserNode({
       <span class="badge">已发送</span>
     </header>
     <div class="user-content">
+      ${contextNodeCount > 0 ? `<div class="context-indicator">基于 ${contextNodeCount} 个节点的上下文继续对话</div>` : ''}
       <div class="user-message"></div>
       <div class="user-flags">
         <span class="info-chip">${discussionRounds} 轮</span>
@@ -269,7 +272,7 @@ export function createUserNode({
       </section>
     </div>
   `;
-  root.querySelector('.user-message').textContent = content;
+  root.querySelector('.user-message').textContent = (displayMessage && contextNodeCount > 0) ? displayMessage : content;
   stageEl.appendChild(root);
   bindNodeInteractions(root, nodeId, requestId);
   const node = {
@@ -278,6 +281,7 @@ export function createUserNode({
     type: 'user',
     x,
     y,
+    fullContent: content,
     root,
     badge: root.querySelector('.badge'),
     cancelBtn: root.querySelector('.user-cancel'),
@@ -405,6 +409,7 @@ export function createConclusionNode({ nodeId, requestId, x, y, model, markdown,
     </div>
     <div class="conclusion-actions">
       <button type="button" class="small-btn conclusion-copy">复制 Markdown</button>
+      <button type="button" class="small-btn conclusion-download">下载 MD</button>
       <button type="button" class="small-btn conclusion-retry">重试结论</button>
       <button type="button" class="small-btn conclusion-attach ${appState.conclusionAutoAttach ? 'active' : ''}">
         ${appState.conclusionAutoAttach ? '自动注入：开' : '自动注入：关'}
@@ -448,6 +453,21 @@ export function createConclusionNode({ nodeId, requestId, x, y, model, markdown,
       await navigator.clipboard.writeText(text);
       flashButtonLabel(e.currentTarget, '已复制');
     } catch { flashButtonLabel(e.currentTarget, '复制失败'); }
+  });
+
+  root.querySelector('.conclusion-download').addEventListener('click', (e) => {
+    const text = node.markdown || '';
+    if (!text) { flashButtonLabel(e.currentTarget, '无内容'); return; }
+    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `conclusion-${requestId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    flashButtonLabel(e.currentTarget, '已下载');
   });
 
   root.querySelector('.conclusion-attach').addEventListener('click', (e) => {

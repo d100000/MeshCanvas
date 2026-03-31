@@ -37,6 +37,7 @@ export function renderEdges() {
     const path = buildBezierPath(start, end);
     const classes = ['edge-path'];
     if (edge.type === 'branch_from_turn') classes.push('branch');
+    if (edge.type === 'context_continuation') classes.push('context');
     if (activeNodeId) {
       if (edge.sourceId === activeNodeId || edge.targetId === activeNodeId) {
         classes.push('active');
@@ -78,7 +79,7 @@ export function isNodeAdjacent(nodeId, activeNodeId) {
 function getAnchorPoint(node, edgeType, isSource) {
   const { width, height } = getNodeDimensions(node);
 
-  if (edgeType === 'branch_from_turn') {
+  if (edgeType === 'branch_from_turn' || edgeType === 'context_continuation') {
     if (isSource) {
       return { x: node.x + width / 2, y: node.y + height };
     }

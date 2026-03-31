@@ -24,6 +24,7 @@ from app.deps import (
 )
 from app.auth import AuthError, SESSION_COOKIE_NAME
 from app.captcha import generate as captcha_generate, verify as captcha_verify, check_honeypot
+from app.schemas.auth import RegisterRequest, LoginRequest
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ async def registration_status() -> JSONResponse:
 
 
 @router.post("/api/auth/register")
-async def register(request: Request) -> JSONResponse:
+async def register(request: Request, body: RegisterRequest) -> JSONResponse:
     client_host = request.client.host if request.client else "unknown"
     if not await rate_limiter.allow_async(f"auth-register:{client_host}", limit=10, window_seconds=600):
         return JSONResponse({"detail": "注册过于频繁，请稍后再试。"}, status_code=429)
@@ -67,17 +68,14 @@ async def register(request: Request) -> JSONResponse:
         return JSONResponse({"detail": "当前不允许注册新用户。"}, status_code=403)
 
     try:
-        payload = await _parse_json_body(request)
         # --- captcha / honeypot ---
-        if check_honeypot(payload.get("website")):
+        if check_honeypot(body.website):
             return JSONResponse({"detail": "请求异常。"}, status_code=400)
-        cap_err = captcha_verify(str(payload.get("captcha_token", "")), str(payload.get("captcha_answer", "")))
+        cap_err = captcha_verify(body.captcha_token, body.captcha_answer)
         if cap_err:
             return JSONResponse({"detail": cap_err}, status_code=400)
         # --- end captcha ---
-        username = str(payload.get("username", ""))
-        password = str(payload.get("password", ""))
-        user, token, _ = await auth_manager.register(username, password)
+        user, token, _ = await auth_manager.register(body.username, body.password)
     except AuthError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
@@ -99,7 +97,7 @@ async def register(request: Request) -> JSONResponse:
 
 
 @router.post("/api/auth/login")
-async def login(request: Request) -> JSONResponse:
+async def login(request: Request, body: LoginRequest) -> JSONResponse:
     client_host = request.client.host if request.client else "unknown"
     if not await rate_limiter.allow_async(f"auth-login:{client_host}", limit=15, window_seconds=600):
         _log_login_failure(
@@ -119,24 +117,20 @@ async def login(request: Request) -> JSONResponse:
         )
         return JSONResponse({"detail": "非法来源。"}, status_code=403)
 
-    username = ""
     try:
-        payload = await _parse_json_body(request)
         # --- captcha / honeypot ---
-        if check_honeypot(payload.get("website")):
+        if check_honeypot(body.website):
             return JSONResponse({"detail": "请求异常。"}, status_code=400)
-        cap_err = captcha_verify(str(payload.get("captcha_token", "")), str(payload.get("captcha_answer", "")))
+        cap_err = captcha_verify(body.captcha_token, body.captcha_answer)
         if cap_err:
             return JSONResponse({"detail": cap_err}, status_code=400)
         # --- end captcha ---
-        username = str(payload.get("username", ""))
-        password = str(payload.get("password", ""))
-        user, token, _ = await auth_manager.login(username, password)
+        user, token, _ = await auth_manager.login(body.username, body.password)
     except AuthError as exc:
         _log_login_failure(
             route="/api/auth/login",
             client_host=client_host,
-            username=username,
+            username=body.username,
             reason=str(exc),
         )
         return JSONResponse({"detail": str(exc)}, status_code=400)

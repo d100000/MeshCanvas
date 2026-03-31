@@ -34,7 +34,7 @@ ADMIN_STATIC_DIR = STATIC_DIR / "admin"
 
 # ── Asset versioning ─────────────────────────────────────────────────────────
 
-ASSET_VERSION = "20260330b"
+ASSET_VERSION = "20260331a"
 _STATIC_RE = _re.compile(r'(/static/[^"\'?]+\.(css|js|svg|png|ico))(\?v=[^"\']*)?')
 
 

@@ -21,5 +21,9 @@ dependencies = [
 [tool.uvicorn]
 factory = false
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
 [tool.setuptools]
 packages = ["app"]

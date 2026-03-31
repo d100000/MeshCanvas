@@ -15,6 +15,7 @@ from app.deps import (
     _parse_json_body,
     OriginError,
 )
+from app.schemas.canvas import CreateCanvasRequest, RenameCanvasRequest, ClusterPositionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ async def list_canvases(request: Request) -> JSONResponse:
 
 
 @router.post("/api/canvases")
-async def create_canvas(request: Request) -> JSONResponse:
+async def create_canvas(request: Request, body: CreateCanvasRequest) -> JSONResponse:
     try:
         user = await _require_user(request)
     except AuthError as exc:
@@ -40,17 +41,13 @@ async def create_canvas(request: Request) -> JSONResponse:
         await _require_origin(request)
     except OriginError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=403)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-    name = str(payload.get("name", "")).strip() or "新画布"
+    name = body.name.strip() or "新画布"
     canvas_id = await database.create_canvas(user["user_id"], name)
     return JSONResponse({"canvas_id": canvas_id, "name": name})
 
 
 @router.patch("/api/canvases/{canvas_id}")
-async def rename_canvas(canvas_id: str, request: Request) -> JSONResponse:
+async def rename_canvas(canvas_id: str, request: Request, body: RenameCanvasRequest) -> JSONResponse:
     try:
         user = await _require_user(request)
     except AuthError as exc:
@@ -59,11 +56,7 @@ async def rename_canvas(canvas_id: str, request: Request) -> JSONResponse:
         await _require_origin(request)
     except OriginError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=403)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-    name = str(payload.get("name", "")).strip()
+    name = body.name.strip()
     if not name:
         return JSONResponse({"detail": "名称不能为空。"}, status_code=400)
     ok = await database.rename_canvas(canvas_id, user["user_id"], name)
@@ -100,7 +93,7 @@ async def get_canvas_state(canvas_id: str, request: Request) -> JSONResponse:
 
 
 @router.put("/api/cluster-positions/{request_id}")
-async def save_cluster_position(request_id: str, request: Request) -> JSONResponse:
+async def save_cluster_position(request_id: str, request: Request, body: ClusterPositionRequest) -> JSONResponse:
     try:
         user = await _require_user(request)
     except AuthError as exc:
@@ -109,17 +102,7 @@ async def save_cluster_position(request_id: str, request: Request) -> JSONRespon
         await _require_origin(request)
     except OriginError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=403)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-    try:
-        user_x = float(payload.get("user_x", 0))
-        user_y = float(payload.get("user_y", 0))
-        model_y = float(payload.get("model_y", 0))
-    except (TypeError, ValueError):
-        return JSONResponse({"detail": "坐标格式错误。"}, status_code=400)
-    ok = await database.upsert_cluster_position(request_id, user["user_id"], user_x, user_y, model_y)
+    ok = await database.upsert_cluster_position(request_id, user["user_id"], body.user_x, body.user_y, body.model_y)
     if not ok:
         return JSONResponse({"detail": "请求不存在或无权限。"}, status_code=404)
     return JSONResponse({"ok": True})

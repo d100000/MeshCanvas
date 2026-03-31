@@ -68,6 +68,19 @@ function sendMessage() {
     }
   }
 
+  // 捕获选中的上下文节点 ID，用于后续创建连线
+  if (selected.length > 0) {
+    if (!appState._pendingContextQueue) appState._pendingContextQueue = [];
+    appState._pendingContextQueue.push(selected.map((n) => n.nodeId));
+  }
+
+  // 保存原始问题用于用户节点展示（避免展示完整上下文拼接内容）
+  if (!appState._pendingUserDisplay) appState._pendingUserDisplay = [];
+  appState._pendingUserDisplay.push({
+    displayMessage: message,
+    contextNodeCount: contextBundle ? selected.length || 1 : 0,
+  });
+
   const suffix = contextBundle ? `\n\n用户新的继续问题：${message}` : '';
   const maxContextLength = Math.max(0, MAX_MESSAGE_LENGTH - suffix.length);
   let clippedContext = contextBundle;

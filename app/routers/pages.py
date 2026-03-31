@@ -23,6 +23,7 @@ from app.deps import (
 )
 from app.auth import AuthError, AuthManager, ADMIN_SESSION_COOKIE_NAME
 from app.config import is_configured, save_settings
+from app.schemas.setup import SetupRequest
 
 logger = logging.getLogger(__name__)
 
@@ -50,46 +51,21 @@ async def setup_page(request: Request) -> Response:
 
 
 @router.post("/api/setup")
-async def save_setup_config(request: Request) -> JSONResponse:
+async def save_setup_config(request: Request, body: SetupRequest) -> JSONResponse:
     if is_configured():
         return JSONResponse({"detail": "已完成配置，无法重复设置。"}, status_code=400)
     origin = request.headers.get("origin")
     if not _is_origin_allowed(origin, request.headers.get("host")):
         return JSONResponse({"detail": "非法来源。"}, status_code=403)
 
-    try:
-        payload = await request.json()
-    except Exception:
-        return JSONResponse({"detail": "请求体格式不正确。"}, status_code=400)
-
-    base_url = str(payload.get("base_url", "")).strip()
-    api_format = str(payload.get("api_format", "openai")).strip()
-    api_key = str(payload.get("API_key", "")).strip()
-    models_raw = payload.get("models", [])
-
-    if not base_url:
-        return JSONResponse({"detail": "请填写 API 地址。"}, status_code=400)
-    if not api_key:
-        return JSONResponse({"detail": "请填写 API Key。"}, status_code=400)
-    if not isinstance(models_raw, list) or not models_raw:
+    models = [{"name": m.name.strip(), "id": m.id.strip()} for m in body.models if m.name.strip() and m.id.strip()]
+    if not models:
         return JSONResponse({"detail": "请至少添加一个模型。"}, status_code=400)
-    if api_format not in ("openai", "anthropic"):
-        return JSONResponse({"detail": "API 格式仅支持 openai 或 anthropic。"}, status_code=400)
-
-    models = []
-    for item in models_raw:
-        if not isinstance(item, dict):
-            return JSONResponse({"detail": "模型格式不正确。"}, status_code=400)
-        name = str(item.get("name", "")).strip()
-        model_id = str(item.get("id", "")).strip()
-        if not name or not model_id:
-            return JSONResponse({"detail": "模型名称和模型 ID 不能为空。"}, status_code=400)
-        models.append({"name": name, "id": model_id})
 
     config_data = {
-        "base_url": base_url,
-        "api_format": api_format,
-        "API_key": api_key,
+        "base_url": body.base_url.strip(),
+        "api_format": body.api_format,
+        "API_key": body.API_key.strip(),
         "models": models,
     }
 

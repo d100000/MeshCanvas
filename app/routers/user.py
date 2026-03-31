@@ -14,6 +14,7 @@ from app.deps import (
     _load_global_service_settings,
     _mask_key,
 )
+from app.schemas.user import CustomApiKeyRequest
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ async def get_user_custom_api_key_api(request: Request) -> JSONResponse:
 
 
 @router.put("/api/user/custom-api-key")
-async def set_user_custom_api_key_api(request: Request) -> JSONResponse:
+async def set_user_custom_api_key_api(request: Request, body: CustomApiKeyRequest) -> JSONResponse:
     try:
         user = await _require_user(request)
     except AuthError as exc:
@@ -94,18 +95,10 @@ async def set_user_custom_api_key_api(request: Request) -> JSONResponse:
     origin = request.headers.get("origin")
     if not _is_origin_allowed(origin, request.headers.get("host")):
         return JSONResponse({"detail": "非法来源。"}, status_code=403)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-    raw_keys = payload.get("model_keys", {})
-    if not isinstance(raw_keys, dict):
-        return JSONResponse({"detail": "model_keys 格式不正确。"}, status_code=400)
-    use_custom_key = bool(payload.get("use_custom_key", False))
     existing = await database.get_user_custom_keys(user["user_id"])
     existing_keys = existing.get("model_keys", {})
     model_keys: dict[str, str] = {}
-    for k, v in raw_keys.items():
+    for k, v in body.model_keys.items():
         key_name = str(k).strip()
         key_val = str(v).strip()
         if key_val == "__KEEP__":
@@ -113,7 +106,7 @@ async def set_user_custom_api_key_api(request: Request) -> JSONResponse:
                 model_keys[key_name] = existing_keys[key_name]
         elif key_val:
             model_keys[key_name] = key_val
-    await database.set_user_custom_keys(user["user_id"], model_keys, use_custom_key)
+    await database.set_user_custom_keys(user["user_id"], model_keys, body.use_custom_key)
     return JSONResponse({"ok": True})
 
 

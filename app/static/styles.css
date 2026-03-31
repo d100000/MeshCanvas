@@ -454,6 +454,12 @@ button {
   stroke-dasharray: 8 6;
 }
 
+.edge-path.context {
+  stroke: var(--edge-branch);
+  stroke-dasharray: 6 4;
+  opacity: 0.65;
+}
+
 .edge-path.active {
   stroke: var(--edge-highlight);
   stroke-width: 3;
@@ -637,6 +643,19 @@ button {
   white-space: pre-wrap;
   line-height: 1.7;
   font-size: 14px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.context-indicator {
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  background: rgba(123, 38, 232, 0.06);
+  border: 1px solid rgba(123, 38, 232, 0.12);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--accent-strong, #7b26e8);
+  font-weight: 500;
 }
 
 .user-flags {

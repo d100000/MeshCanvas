@@ -85,6 +85,19 @@ export function bindCanvasPan() {
   viewportEl.addEventListener(
     'wheel',
     (event) => {
+      // 可滚动容器内的滚轮事件应交给浏览器处理（而非触发画布缩放/平移）
+      const scrollable = event.target.closest('.tab-panel, .conclusion-body');
+      if (scrollable && !event.ctrlKey && !event.metaKey) {
+        const { scrollTop, scrollHeight, clientHeight } = scrollable;
+        if (scrollHeight > clientHeight) {
+          const atTop = scrollTop <= 0;
+          const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+          // 未到达滚动边界时，让浏览器处理内容滚动
+          if (!(atBottom && event.deltaY > 0) && !(atTop && event.deltaY < 0)) {
+            return;
+          }
+        }
+      }
       event.preventDefault();
       if (event.ctrlKey || event.metaKey) {
         const factor = event.deltaY < 0 ? 1.02 : 0.98;
@@ -255,10 +268,21 @@ export function findAvailableBox(candidates, width, height) {
       return bbox;
     }
   }
-  const fallbackY = Array.from(requestClusters.values()).reduce((maxY, cluster) => {
-    return Math.max(maxY, cluster.bbox.y + cluster.bbox.height + 120);
-  }, 0);
-  return { x: 0, y: fallbackY, width, height };
+  // fallback：放在所有现有 cluster 下方，以视口中心水平居中
+  const vr = viewportEl.getBoundingClientRect();
+  const fallbackCenterX = (vr.width / 2 - state.offsetX) / state.scale;
+  let fallbackY = 0;
+  const gap = CLUSTER_PADDING * 2 + 60;
+  for (const cluster of requestClusters.values()) {
+    fallbackY = Math.max(fallbackY, cluster.bbox.y + cluster.bbox.height + gap);
+  }
+  let fallbackBox = { x: fallbackCenterX - width / 2, y: fallbackY, width, height };
+  let attempts = 0;
+  while (hasClusterOverlap(fallbackBox) && attempts < 10) {
+    fallbackBox = { x: fallbackBox.x + width + gap, y: fallbackBox.y, width, height };
+    attempts += 1;
+  }
+  return fallbackBox;
 }
 
 export function hasClusterOverlap(nextBox) {

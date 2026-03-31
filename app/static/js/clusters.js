@@ -7,7 +7,7 @@ import {
   viewportEl,
   MODEL_NODE_WIDTH, MODEL_NODE_HEIGHT,
   USER_NODE_WIDTH, USER_NODE_HEIGHT,
-  CLUSTER_GAP_X, CLUSTER_GAP_Y,
+  CLUSTER_GAP_X, CLUSTER_GAP_Y, CLUSTER_PADDING,
   CONCLUSION_NODE_WIDTH, CONCLUSION_NODE_HEIGHT,
   getCluster, setSaveStatus,
   positionSaveTimers,
@@ -123,6 +123,8 @@ export function schedulePositionSave(requestId) {
 export function createCluster({
   requestId,
   userMessage,
+  displayMessage,
+  contextNodeCount,
   discussionRounds,
   models: clusterModels,
   searchEnabled,
@@ -145,6 +147,8 @@ export function createCluster({
     x: layout.userX,
     y: layout.userY,
     content: userMessage,
+    displayMessage,
+    contextNodeCount,
     discussionRounds,
     searchEnabled,
     thinkEnabled,
@@ -217,12 +221,23 @@ export function placeCluster({ modelCount, parentRequestId, sourceModel }) {
     ];
     bbox = findAvailableBox(candidates, footprintWidth, footprintHeight);
   } else {
-    const topX = centerWorldX - footprintWidth / 2 + (appState.clusterCount % 2) * 80;
-    const topY = centerWorldY - 120 + appState.clusterCount * 120;
+    const colCount = 3;
+    const colSpacing = footprintWidth + CLUSTER_PADDING * 2 + 60;
+    const rowSpacing = footprintHeight + CLUSTER_PADDING * 2 + 60;
+    const baseX = centerWorldX - colCount * colSpacing / 2;
+    const baseY = centerWorldY - footprintHeight / 2;
     const candidates = [];
-    for (let row = 0; row < 40; row += 1) {
-      candidates.push({ x: topX, y: topY + row * (footprintHeight + 80) });
+    for (let i = 0; i < 42; i += 1) {
+      candidates.push({
+        x: baseX + (i % colCount) * colSpacing,
+        y: baseY + Math.floor(i / colCount) * rowSpacing,
+      });
     }
+    // 按距视口中心距离排序，优先使用离用户最近的位置
+    candidates.sort((a, b) => {
+      return ((a.x - centerWorldX) ** 2 + (a.y - centerWorldY) ** 2)
+        - ((b.x - centerWorldX) ** 2 + (b.y - centerWorldY) ** 2);
+    });
     bbox = findAvailableBox(candidates, footprintWidth, footprintHeight);
     appState.clusterCount += 1;
   }
@@ -274,12 +289,21 @@ export function replayCluster(req) {
     const viewportRect = viewportEl.getBoundingClientRect();
     const cx = (viewportRect.width / 2 - state.offsetX) / state.scale;
     const cy = (viewportRect.height / 2 - state.offsetY) / state.scale;
-    const topX = cx - footprintWidth / 2 + (appState.clusterCount % 2) * 80;
-    const topY = cy - 120 + appState.clusterCount * 120;
+    const colCount = 3;
+    const colSpacing = footprintWidth + CLUSTER_PADDING * 2 + 60;
+    const rowSpacing = footprintHeight + CLUSTER_PADDING * 2 + 60;
+    const baseX = cx - colCount * colSpacing / 2;
+    const baseY = cy - footprintHeight / 2;
     const candidates = [];
-    for (let row = 0; row < 40; row += 1) {
-      candidates.push({ x: topX, y: topY + row * (footprintHeight + 80) });
+    for (let i = 0; i < 42; i += 1) {
+      candidates.push({
+        x: baseX + (i % colCount) * colSpacing,
+        y: baseY + Math.floor(i / colCount) * rowSpacing,
+      });
     }
+    candidates.sort((a, b) => {
+      return ((a.x - cx) ** 2 + (a.y - cy) ** 2) - ((b.x - cx) ** 2 + (b.y - cy) ** 2);
+    });
     const bboxResult = findAvailableBox(candidates, footprintWidth, footprintHeight);
     const userX2 = bboxResult.x + (bboxResult.width - USER_NODE_WIDTH) / 2;
     const mRowWidth = modelCountVal * MODEL_NODE_WIDTH + Math.max(0, modelCountVal - 1) * CLUSTER_GAP_X;

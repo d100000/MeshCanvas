@@ -52,6 +52,16 @@ from app.deps import (
 from app.auth import AuthError, AuthManager, ADMIN_SESSION_COOKIE_NAME, SESSION_DAYS
 from app.captcha import verify as captcha_verify, check_honeypot
 from app.llm_client import create_llm_client
+from app.schemas.admin import (
+    AdminLoginRequest,
+    RechargeRequest,
+    SetRoleRequest,
+    ResetPasswordRequest,
+    ChangePasswordRequest,
+    PricingRequest,
+    ModelConfigRequest,
+    ModelConfigTestRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +145,7 @@ async def admin_session_login(request: Request) -> Response:
 
 
 @router.post("/api/admin/login")
-async def admin_login(request: Request) -> JSONResponse:
+async def admin_login(request: Request, body: AdminLoginRequest) -> JSONResponse:
     client_host = request.client.host if request.client else "unknown"
     if not await rate_limiter.allow_async(f"admin-login:{client_host}", limit=10, window_seconds=600):
         _log_login_failure(
@@ -145,24 +155,20 @@ async def admin_login(request: Request) -> JSONResponse:
             reason="rate_limited",
         )
         return JSONResponse({"detail": "登录过于频繁。"}, status_code=429)
-    username = ""
     try:
-        payload = await _parse_json_body(request)
         # --- captcha / honeypot ---
-        if check_honeypot(payload.get("website")):
+        if check_honeypot(body.website):
             return JSONResponse({"detail": "请求异常。"}, status_code=400)
-        cap_err = captcha_verify(str(payload.get("captcha_token", "")), str(payload.get("captcha_answer", "")))
+        cap_err = captcha_verify(body.captcha_token, body.captcha_answer)
         if cap_err:
             return JSONResponse({"detail": cap_err}, status_code=400)
         # --- end captcha ---
-        username = str(payload.get("username", ""))
-        password = str(payload.get("password", ""))
-        user_info, token, _ = await auth_manager.admin_login(username, password)
+        user_info, token, _ = await auth_manager.admin_login(body.username, body.password)
     except AuthError as exc:
         _log_login_failure(
             route="/api/admin/login",
             client_host=client_host,
-            username=username,
+            username=body.username,
             reason=str(exc),
         )
         return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -197,150 +203,105 @@ async def admin_list_users(request: Request) -> JSONResponse:
 
 
 @router.post("/api/admin/recharge")
-async def admin_recharge(request: Request) -> JSONResponse:
+async def admin_recharge(request: Request, body: RechargeRequest) -> JSONResponse:
     try:
         admin = await _require_admin(request)
     except AuthError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=401)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-    try:
-        user_id = int(payload.get("user_id", 0))
-    except (TypeError, ValueError):
-        return JSONResponse({"detail": "用户 ID 格式不正确。"}, status_code=400)
-    try:
-        points = float(payload.get("points", 0))
-    except (TypeError, ValueError):
-        return JSONResponse({"detail": "点数格式不正确。"}, status_code=400)
-    if not math.isfinite(points) or abs(points) > _RECHARGE_POINTS_ABS_MAX:
+    if not math.isfinite(body.points) or abs(body.points) > _RECHARGE_POINTS_ABS_MAX:
         return JSONResponse({"detail": "点数无效或超出允许范围。"}, status_code=400)
-    remark = str(payload.get("remark", "")).strip()
+    remark = body.remark.strip()
     if len(remark) > _ADMIN_RECHARGE_REMARK_MAX:
         remark = remark[:_ADMIN_RECHARGE_REMARK_MAX]
-    if user_id <= 0 or points == 0:
+    if body.user_id <= 0 or body.points == 0:
         return JSONResponse({"detail": "用户 ID 和点数不能为空。"}, status_code=400)
-    if not await database.get_user_by_id(user_id):
+    if not await database.get_user_by_id(body.user_id):
         return JSONResponse({"detail": "用户不存在。"}, status_code=404)
-    ok = await database.add_points_non_negative(user_id, points, admin["user_id"], remark)
+    ok = await database.add_points_non_negative(body.user_id, body.points, admin["user_id"], remark)
     if not ok:
-        current_balance = await database.get_user_balance(user_id)
+        current_balance = await database.get_user_balance(body.user_id)
         return JSONResponse(
-            {"detail": f"余额不足，当前余额 {current_balance:.2f}，无法扣减 {abs(points):.2f}。"},
+            {"detail": f"余额不足，当前余额 {current_balance:.2f}，无法扣减 {abs(body.points):.2f}。"},
             status_code=400,
         )
-    new_balance = await database.get_user_balance(user_id)
+    new_balance = await database.get_user_balance(body.user_id)
     _emit_admin_audit(
         admin["user_id"], "recharge",
-        target_user_id=user_id,
-        points=points, remark=remark, new_balance=round(new_balance, 2),
+        target_user_id=body.user_id,
+        points=body.points, remark=remark, new_balance=round(new_balance, 2),
     )
     return JSONResponse({"ok": True, "balance": new_balance})
 
 
 @router.post("/api/admin/set-role")
-async def admin_set_role(request: Request) -> JSONResponse:
+async def admin_set_role(request: Request, body: SetRoleRequest) -> JSONResponse:
     try:
         admin = await _require_admin(request)
     except AuthError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=401)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-    try:
-        user_id = int(payload.get("user_id", 0))
-    except (TypeError, ValueError):
-        return JSONResponse({"detail": "用户 ID 格式不正确。"}, status_code=400)
-    if user_id <= 0:
+    if body.user_id <= 0:
         return JSONResponse({"detail": "用户 ID 无效。"}, status_code=400)
-    role = str(payload.get("role", "user")).strip()
-    if role not in ("user", "admin"):
-        return JSONResponse({"detail": "角色只能是 user 或 admin。"}, status_code=400)
-    target = await database.get_user_by_id(user_id)
+    target = await database.get_user_by_id(body.user_id)
     if not target:
         return JSONResponse({"detail": "用户不存在。"}, status_code=404)
-    if user_id == admin["user_id"] and role == "user":
+    if body.user_id == admin["user_id"] and body.role == "user":
         return JSONResponse({"detail": "不能取消自己的管理员权限。"}, status_code=400)
     current_role = str(target.get("role") or "user")
-    if current_role == "admin" and role == "user":
+    if current_role == "admin" and body.role == "user":
         if await database.count_users_with_role("admin") <= 1:
             return JSONResponse({"detail": "至少需要保留一名管理员。"}, status_code=400)
-    await database.set_user_role(user_id, role)
+    await database.set_user_role(body.user_id, body.role)
     _emit_admin_audit(
         admin["user_id"], "set_role",
-        target_user_id=user_id,
-        new_role=role, prev_role=current_role,
+        target_user_id=body.user_id,
+        new_role=body.role, prev_role=current_role,
     )
     return JSONResponse({"ok": True})
 
 
 @router.post("/api/admin/reset-password")
-async def admin_reset_password(request: Request) -> JSONResponse:
+async def admin_reset_password(request: Request, body: ResetPasswordRequest) -> JSONResponse:
     try:
         admin = await _require_admin(request)
     except AuthError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=401)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-    try:
-        user_id = int(payload.get("user_id", 0))
-    except (TypeError, ValueError):
-        return JSONResponse({"detail": "用户 ID 格式不正确。"}, status_code=400)
-    if user_id <= 0:
+    if body.user_id <= 0:
         return JSONResponse({"detail": "用户 ID 无效。"}, status_code=400)
-    new_password = str(payload.get("new_password", "")).strip()
-    if len(new_password) < 8:
-        return JSONResponse({"detail": "密码至少需要 8 位。"}, status_code=400)
-    target = await database.get_user_by_id(user_id)
+    target = await database.get_user_by_id(body.user_id)
     if not target:
         return JSONResponse({"detail": "用户不存在。"}, status_code=404)
     username = target.get("username", "")
     salt = secrets.token_hex(16)
-    password_hash = await asyncio.to_thread(AuthManager._hash_password, new_password, salt)
+    password_hash = await asyncio.to_thread(AuthManager._hash_password, body.new_password, salt)
     await database.update_user_password(username, password_hash, salt)
     _emit_admin_audit(
         admin["user_id"], "reset_password",
-        target_user_id=user_id,
+        target_user_id=body.user_id,
     )
     return JSONResponse({"ok": True})
 
 
 @router.post("/api/admin/change-password")
-async def admin_change_password(request: Request) -> JSONResponse:
+async def admin_change_password(request: Request, body: ChangePasswordRequest) -> JSONResponse:
     """管理员修改自己的密码。需要验证旧密码，成功后自动注销当前会话。"""
     try:
         admin = await _require_admin(request)
     except AuthError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=401)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-
-    old_password = str(payload.get("old_password", "")).strip()
-    new_password = str(payload.get("new_password", "")).strip()
-    if not old_password:
-        return JSONResponse({"detail": "请输入当前密码。"}, status_code=400)
-    if len(new_password) < 8:
-        return JSONResponse({"detail": "新密码至少需要 8 位。"}, status_code=400)
 
     # 验证旧密码
     user_record = await database.get_user_by_username(admin["username"])
     if not user_record:
         return JSONResponse({"detail": "用户不存在。"}, status_code=404)
     expected_hash = await asyncio.to_thread(
-        AuthManager._hash_password, old_password, user_record["password_salt"]
+        AuthManager._hash_password, body.old_password, user_record["password_salt"]
     )
     if not hmac.compare_digest(expected_hash, user_record["password_hash"]):
         return JSONResponse({"detail": "当前密码错误。"}, status_code=403)
 
     # 更新密码
     salt = secrets.token_hex(16)
-    password_hash = await asyncio.to_thread(AuthManager._hash_password, new_password, salt)
+    password_hash = await asyncio.to_thread(AuthManager._hash_password, body.new_password, salt)
     await database.update_user_password(admin["username"], password_hash, salt)
 
     # 审计日志
@@ -366,43 +327,23 @@ async def admin_get_pricing(request: Request) -> JSONResponse:
 
 
 @router.put("/api/admin/pricing")
-async def admin_update_pricing(request: Request) -> JSONResponse:
+async def admin_update_pricing(request: Request, body: PricingRequest) -> JSONResponse:
     try:
         admin = await _require_admin(request)
     except AuthError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=401)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-    model_id = str(payload.get("model_id", "")).strip()
-    display_name = str(payload.get("display_name", model_id)).strip()
-    try:
-        input_per_1k = float(payload.get("input_points_per_1k", 1.0))
-        output_per_1k = float(payload.get("output_points_per_1k", 2.0))
-    except (TypeError, ValueError):
-        return JSONResponse({"detail": "单价格式不正确。"}, status_code=400)
     if (
-        not math.isfinite(input_per_1k)
-        or not math.isfinite(output_per_1k)
-        or input_per_1k < 0
-        or output_per_1k < 0
-        or input_per_1k > _PRICING_POINTS_MAX
-        or output_per_1k > _PRICING_POINTS_MAX
+        not math.isfinite(body.input_points_per_1k)
+        or not math.isfinite(body.output_points_per_1k)
+        or body.input_points_per_1k > _PRICING_POINTS_MAX
+        or body.output_points_per_1k > _PRICING_POINTS_MAX
     ):
         return JSONResponse({"detail": "单价须为有限非负数且不超过上限。"}, status_code=400)
-    try:
-        is_active = int(payload.get("is_active", 1))
-    except (TypeError, ValueError):
-        return JSONResponse({"detail": "状态 is_active 须为 0 或 1。"}, status_code=400)
-    if is_active not in (0, 1):
-        return JSONResponse({"detail": "状态 is_active 须为 0 或 1。"}, status_code=400)
-    if not model_id:
-        return JSONResponse({"detail": "模型 ID 不能为空。"}, status_code=400)
-    await database.upsert_pricing(model_id, display_name, input_per_1k, output_per_1k, is_active)
+    display_name = body.display_name.strip() or body.model_id.strip()
+    await database.upsert_pricing(body.model_id, display_name, body.input_points_per_1k, body.output_points_per_1k, body.is_active)
     _emit_admin_audit(
         admin["user_id"], "upsert_pricing",
-        model_id=model_id, input_per_1k=input_per_1k, output_per_1k=output_per_1k,
+        model_id=body.model_id, input_per_1k=body.input_points_per_1k, output_per_1k=body.output_points_per_1k,
     )
     return JSONResponse({"ok": True})
 
@@ -458,6 +399,8 @@ async def admin_get_config(request: Request) -> JSONResponse:
 
 @router.put("/api/admin/config")
 async def admin_update_config(request: Request) -> JSONResponse:
+    """Update system config. Still uses manual parsing because the allowlist
+    filter + normalize logic is tightly coupled to the existing helper."""
     try:
         admin = await _require_admin(request)
     except AuthError as exc:
@@ -522,45 +465,24 @@ async def admin_get_model_config(request: Request) -> JSONResponse:
 
 
 @router.put("/api/admin/model-config")
-async def admin_update_model_config(request: Request) -> JSONResponse:
+async def admin_update_model_config(request: Request, body: ModelConfigRequest) -> JSONResponse:
     """更新全局模型/API/搜索配置。"""
     try:
         admin = await _require_admin(request)
     except AuthError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=401)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
 
-    api_base_url = str(payload.get("api_base_url", "")).strip()
-    api_format = str(payload.get("api_format", "openai")).strip()
-    api_key_raw = str(payload.get("api_key", "")).strip()
-    models_raw = payload.get("models", [])
-    firecrawl_key_raw = str(payload.get("firecrawl_api_key", "")).strip()
-    firecrawl_country = str(payload.get("firecrawl_country", "CN")).strip() or "CN"
-    try:
-        firecrawl_timeout = max(5000, min(int(payload.get("firecrawl_timeout_ms", 45000)), 120000))
-    except (TypeError, ValueError):
-        firecrawl_timeout = 45000
-
+    api_base_url = body.api_base_url.strip()
     if not api_base_url:
         return JSONResponse({"detail": "请填写 API 地址。"}, status_code=400)
-    if api_format not in ("openai", "anthropic"):
-        return JSONResponse({"detail": "API 格式仅支持 openai 或 anthropic。"}, status_code=400)
 
-    models: list[dict[str, str]] = []
-    if isinstance(models_raw, list):
-        for item in models_raw:
-            if isinstance(item, dict):
-                name = str(item.get("name", "")).strip()
-                mid = str(item.get("id", "")).strip()
-                if name and mid:
-                    models.append({"name": name, "id": mid})
+    models = [{"name": m.name.strip(), "id": m.id.strip()} for m in body.models if m.name.strip() and m.id.strip()]
     if not models:
         return JSONResponse({"detail": "请至少添加一个模型。"}, status_code=400)
 
     # 留空 key 时保留已有值
+    api_key_raw = body.api_key.strip()
+    firecrawl_key_raw = body.firecrawl_api_key.strip()
     existing = await _load_global_service_settings()
     if not api_key_raw:
         api_key_raw = existing.get("api_key", "")
@@ -569,41 +491,33 @@ async def admin_update_model_config(request: Request) -> JSONResponse:
     if not firecrawl_key_raw:
         firecrawl_key_raw = existing.get("firecrawl_api_key", "")
 
-    preprocess_model = str(payload.get("preprocess_model", "")).strip()
-    extra_params_raw = payload.get("extra_params", {})
-    if not isinstance(extra_params_raw, dict):
-        extra_params_raw = {}
-    extra_headers_raw = _sanitize_extra_headers(payload.get("extra_headers", {}))
-    user_api_base_url = str(payload.get("user_api_base_url", "")).strip()
-    user_api_format = str(payload.get("user_api_format", "openai")).strip()
-    if user_api_format not in ("openai", "anthropic"):
-        user_api_format = "openai"
+    extra_headers_raw = _sanitize_extra_headers(body.extra_headers)
 
     await database.set_global_model_config(
         api_base_url=api_base_url,
-        api_format=api_format,
+        api_format=body.api_format,
         api_key=api_key_raw,
         models_json=_json.dumps(models, ensure_ascii=False),
         firecrawl_api_key=firecrawl_key_raw,
-        firecrawl_country=firecrawl_country,
-        firecrawl_timeout_ms=firecrawl_timeout,
-        preprocess_model=preprocess_model,
-        user_api_base_url=user_api_base_url,
-        user_api_format=user_api_format,
-        extra_params=extra_params_raw,
+        firecrawl_country=body.firecrawl_country or "CN",
+        firecrawl_timeout_ms=body.firecrawl_timeout_ms,
+        preprocess_model=body.preprocess_model.strip(),
+        user_api_base_url=body.user_api_base_url.strip(),
+        user_api_format=body.user_api_format,
+        extra_params=body.extra_params,
         extra_headers=extra_headers_raw,
     )
     _emit_admin_audit(
         admin["user_id"], "update_model_config",
-        api_base_url=api_base_url, api_format=api_format, model_count=len(models),
-        preprocess_model=preprocess_model,
+        api_base_url=api_base_url, api_format=body.api_format, model_count=len(models),
+        preprocess_model=body.preprocess_model.strip(),
         extra_headers=_summarize_extra_headers(extra_headers_raw),
     )
     return JSONResponse({"ok": True})
 
 
 @router.post("/api/admin/model-config/test")
-async def admin_test_model_config(request: Request) -> JSONResponse:
+async def admin_test_model_config(request: Request, body: ModelConfigTestRequest) -> JSONResponse:
     client_host = request.client.host if request.client else "unknown"
     try:
         admin = await _require_admin(request)
@@ -615,13 +529,9 @@ async def admin_test_model_config(request: Request) -> JSONResponse:
         window_seconds=60,
     ):
         return JSONResponse({"detail": "测试过于频繁，请稍后再试。"}, status_code=429)
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
 
-    model_name = str(payload.get("model_name", "")).strip()
-    model_id = str(payload.get("model_id", "")).strip()
+    model_name = body.model_name.strip()
+    model_id = body.model_id.strip()
     gs = await _load_global_service_settings()
     api_key = str(gs.get("api_key", "")).strip()
     api_base_url = str(gs.get("api_base_url", "")).strip()

@@ -21,6 +21,7 @@ from app.deps import (
     _parse_json_body,
     OriginError,
 )
+from app.schemas.models import SelectionSummaryRequest, ConversationAnalysisRequest
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ async def list_models(request: Request):
 
 
 @router.post("/api/selection-summary")
-async def selection_summary(request: Request) -> JSONResponse:
+async def selection_summary(request: Request, body: SelectionSummaryRequest) -> JSONResponse:
     user, us, err = await _load_user_settings_or_error(request)
     if err:
         return err
@@ -54,21 +55,11 @@ async def selection_summary(request: Request) -> JSONResponse:
     if not await rate_limiter.allow_async(f"selection-summary:{user['user_id']}:{client_host}", limit=24, window_seconds=300):
         return JSONResponse({"detail": "总结请求过于频繁，请稍后再试。"}, status_code=429)
 
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-
-    bundle = str(payload.get("bundle", "")).strip()
-    try:
-        count = max(0, min(int(payload.get("count", 0)), 200))
-    except (TypeError, ValueError):
-        count = 0
+    bundle = body.bundle.strip()
+    count = body.count
 
     if not bundle:
         return JSONResponse({"detail": "缺少待总结的节点内容。"}, status_code=400)
-    if count <= 0:
-        count = 1
 
     try:
         summary, model = await _summarize_selection_bundle(bundle=bundle, count=count, user_settings=us)
@@ -104,7 +95,7 @@ async def selection_summary(request: Request) -> JSONResponse:
 
 
 @router.post("/api/conversation-analysis")
-async def conversation_analysis(request: Request) -> JSONResponse:
+async def conversation_analysis(request: Request, body: ConversationAnalysisRequest) -> JSONResponse:
     user, us, err = await _load_user_settings_or_error(request)
     if err:
         return err
@@ -117,13 +108,8 @@ async def conversation_analysis(request: Request) -> JSONResponse:
     if not await rate_limiter.allow_async(f"conv-analysis:{user['user_id']}:{client_host}", limit=20, window_seconds=300):
         return JSONResponse({"detail": "分析请求过于频繁，请稍后再试。"}, status_code=429)
 
-    try:
-        payload = await _parse_json_body(request)
-    except AuthError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
-
-    request_id = str(payload.get("request_id", "")).strip()
-    messages = payload.get("messages")
+    request_id = body.request_id.strip()
+    messages = [{"role": m.role, "content": m.content} for m in body.messages] if body.messages else None
 
     if not messages or not isinstance(messages, list):
         if request_id:
