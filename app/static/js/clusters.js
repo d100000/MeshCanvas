@@ -252,7 +252,7 @@ export function placeCluster({ modelCount, parentRequestId, sourceModel }) {
     userX,
     userY: bbox.y,
     modelStartX,
-    modelY: bbox.y + USER_NODE_HEIGHT + CLUSTER_GAP_Y,
+    modelY: bbox.y + estimatedUserHeight + CLUSTER_GAP_Y,
   };
 }
 
@@ -268,7 +268,8 @@ export function replayCluster(req) {
   const modelCountVal = activeModels.length;
   const modelRowWidth = modelCountVal * MODEL_NODE_WIDTH + Math.max(0, modelCountVal - 1) * CLUSTER_GAP_X;
   const footprintWidth = Math.max(USER_NODE_WIDTH, modelRowWidth);
-  const footprintHeight = USER_NODE_HEIGHT + CLUSTER_GAP_Y + MODEL_NODE_HEIGHT;
+  const estimatedUserHeight = USER_NODE_HEIGHT + 250;
+  const footprintHeight = estimatedUserHeight + CLUSTER_GAP_Y + MODEL_NODE_HEIGHT;
 
   let layout;
   if (position) {
@@ -311,7 +312,7 @@ export function replayCluster(req) {
       userX: userX2,
       userY: bboxResult.y,
       modelStartX: bboxResult.x + (bboxResult.width - mRowWidth) / 2,
-      modelY: bboxResult.y + USER_NODE_HEIGHT + CLUSTER_GAP_Y,
+      modelY: bboxResult.y + estimatedUserHeight + CLUSTER_GAP_Y,
       centerX: bboxResult.x + bboxResult.width / 2,
       bbox: bboxResult,
     };
