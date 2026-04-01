@@ -20,7 +20,7 @@ import {
   getSelectedContextNodes, shouldUseSelectionSummary,
   getComposerMode, getSelectionSummaryModelLabel,
   updateComposerHint, clearSelection, updateSelectionActions,
-  buildContextBundleFromSelection,
+  buildContextBundleFromSelection, queueSelectionSummaryRefresh,
 } from './selection.js';
 import { sendBranch, openBranchComposer, getConclusionNode } from './nodes.js';
 import { initCanvases, switchCanvas, renderCanvasList } from './sidebar.js';
@@ -116,6 +116,8 @@ function autoResizeComposer() {
 // ── Event listeners ──────────────────────────────────────────────────────────
 
 selectionContinueBtn?.addEventListener('click', () => {
+  // 点击"继续对话"时才触发圈选总结（节省 token）
+  queueSelectionSummaryRefresh();
   messageInput.focus();
 });
 selectionBranchBtn?.addEventListener('click', () => {

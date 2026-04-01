@@ -92,7 +92,7 @@ export function ensureModelTurn(requestId, model, round) {
   const panel = document.createElement('section');
   panel.className = 'tab-panel';
   panel.innerHTML = `
-    <div class="turn-meta">状态：<span class="turn-state">等待中</span><span class="turn-summary-chip">摘要：等待摘要</span></div>
+    <div class="turn-meta">状态：<span class="turn-state">等待中</span><span class="turn-word-count">0 字</span><span class="turn-summary-chip">摘要：等待摘要</span></div>
     <div class="md"></div>
   `;
 
@@ -104,6 +104,7 @@ export function ensureModelTurn(requestId, model, round) {
     btn: button,
     panel,
     stateEl: panel.querySelector('.turn-state'),
+    wordCountEl: panel.querySelector('.turn-word-count'),
     summaryEl: button.querySelector('.tab-btn-summary'),
     summaryChipEl: panel.querySelector('.turn-summary-chip'),
     mdEl: panel.querySelector('.md'),
@@ -142,6 +143,11 @@ export function scheduleTurnRender(turn, force = false) {
   const render = () => {
     turn.renderTimer = null;
     updateTurnSummary(turn);
+    // 更新字数统计
+    if (turn.wordCountEl) {
+      const len = turn.raw.length;
+      turn.wordCountEl.textContent = len >= 1000 ? `${(len / 1000).toFixed(1)}k 字` : `${len} 字`;
+    }
     turn.mdEl.innerHTML = window.renderMarkdown ? window.renderMarkdown(turn.raw) : escapeHtml(turn.raw);
     // 智能滚动：仅当用户已在底部附近时才自动滚动，避免打断回读
     const threshold = 60;

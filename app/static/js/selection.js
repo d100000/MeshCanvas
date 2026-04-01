@@ -83,9 +83,12 @@ export function renderSelectionSummary() {
     selectionSummaryEl.classList.add('error');
     selectionSummaryEl.classList.remove('loading');
     selectionSummaryTextEl.textContent = `总结失败：${selectionSummaryState.error}；发送时将自动回退原始上下文。`;
+  } else if (selectionSummaryState.text) {
+    selectionSummaryEl.classList.remove('loading', 'error');
+    selectionSummaryTextEl.textContent = selectionSummaryState.text;
   } else {
     selectionSummaryEl.classList.remove('loading', 'error');
-    selectionSummaryTextEl.textContent = selectionSummaryState.text || '已圈选节点，发送时会自动带入上下文。';
+    selectionSummaryTextEl.textContent = '已圈选节点，发送时将自动压缩上下文并带入对话。';
   }
 
   selectionSummaryEl.classList.remove('hidden');
@@ -239,7 +242,8 @@ export function updateComposerHint() {
     composerModeEl.dataset.mode = mode.key;
   }
   renderSelectedChips();
-  queueSelectionSummaryRefresh();
+  // 不再自动触发总结——仅在发送时按需执行，节省 token
+  renderSelectionSummary();
 }
 
 // ── Selection chips ──────────────────────────────────────────────────────────
