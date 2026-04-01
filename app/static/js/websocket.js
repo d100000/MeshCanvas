@@ -337,13 +337,10 @@ function handleConclusionStart(payload) {
     if (oldNode) { oldNode.root.remove(); nodes.delete(cluster.conclusionNodeId); }
   }
 
-  const modelNodes = cluster.modelNodeIds.map(id => nodes.get(id)).filter(Boolean);
+  // 使用实际集群边界计算结论节点位置，避免与搜索面板展开后的节点重叠
+  updateClusterBounds(payload.request_id);
   let cx = cluster.baseX - CONCLUSION_NODE_WIDTH / 2;
-  let cy = cluster.modelY + MODEL_NODE_HEIGHT + 40;
-  if (modelNodes.length > 0) {
-    const lastModel = modelNodes[modelNodes.length - 1];
-    cy = lastModel.y + MODEL_NODE_HEIGHT + 40;
-  }
+  let cy = cluster.bbox.y + cluster.bbox.height + 40;
 
   createConclusionNode({
     nodeId,

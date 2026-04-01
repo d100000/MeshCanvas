@@ -20,14 +20,19 @@ import { updateSelectionActions, clearSelection, clearSelectionSummary, updateCo
 import { updateConclusionHint } from './nodes.js';
 
 let _rafMinimapScheduled = false;
+let _minimapThrottleTimer = null;
 
 export function scheduleRenderMinimap() {
   if (_rafMinimapScheduled) return;
-  _rafMinimapScheduled = true;
-  requestAnimationFrame(() => {
-    _rafMinimapScheduled = false;
-    renderMinimap();
-  });
+  if (_minimapThrottleTimer) return;
+  _minimapThrottleTimer = setTimeout(() => {
+    _minimapThrottleTimer = null;
+    _rafMinimapScheduled = true;
+    requestAnimationFrame(() => {
+      _rafMinimapScheduled = false;
+      renderMinimap();
+    });
+  }, 33);
 }
 
 export function applyTransform() {
@@ -396,6 +401,11 @@ export function hasClusterOverlap(nextBox) {
 }
 
 export function clearCanvas() {
+  // Clean up minimap throttle timer
+  if (_minimapThrottleTimer) {
+    clearTimeout(_minimapThrottleTimer);
+    _minimapThrottleTimer = null;
+  }
   // Clean up render timers before clearing
   for (const node of nodes.values()) {
     if (node.turns) {

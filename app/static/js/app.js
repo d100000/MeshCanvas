@@ -11,7 +11,7 @@ import {
   DEFAULT_SCALE, MAX_MESSAGE_LENGTH, CONCLUSION_CONTEXT_MAX_CHARS,
   getSearchMode, selectionSummaryState,
 } from './state.js';
-import { clamp, showModal } from './utils.js';
+import { clamp, showModal, showAlert } from './utils.js';
 import {
   applyTransform, bindCanvasPan, setZoom, focusCluster, fitAllNodes,
   renderMinimap, toggleSidebar,
@@ -27,11 +27,15 @@ import { initCanvases, switchCanvas, renderCanvasList } from './sidebar.js';
 
 // ── Send message ─────────────────────────────────────────────────────────────
 
+let _sendThrottled = false;
 function sendMessage() {
   const message = messageInput.value.trim();
-  if (!message || appState.socket?.readyState !== WebSocket.OPEN) {
+  if (!message || appState.socket?.readyState !== WebSocket.OPEN || _sendThrottled) {
     return;
   }
+  _sendThrottled = true;
+  sendBtn.disabled = true;
+  setTimeout(() => { _sendThrottled = false; sendBtn.disabled = false; }, 500);
 
   const selected = getSelectedContextNodes();
   if (selected.length === 1 && selected[0].type === 'model' && !shouldUseSelectionSummary(selected)) {
@@ -100,7 +104,10 @@ function sendMessage() {
         canvas_id: appState.currentCanvasId,
       })
     );
-  } catch (_e) { return; }
+  } catch (_e) {
+    showAlert('消息发送失败，请检查网络连接。');
+    return;
+  }
 
   messageInput.value = '';
   autoResizeComposer();
@@ -143,8 +150,13 @@ if (sidebarLogoutBtn) {
     }
   });
 }
-fitBtn.addEventListener('click', () => fitAllNodes());
+let _fitClickTimer = null;
+fitBtn.addEventListener('click', () => {
+  if (_fitClickTimer) { clearTimeout(_fitClickTimer); _fitClickTimer = null; }
+  _fitClickTimer = setTimeout(() => { _fitClickTimer = null; fitAllNodes(); }, 250);
+});
 fitBtn.addEventListener('dblclick', () => {
+  if (_fitClickTimer) { clearTimeout(_fitClickTimer); _fitClickTimer = null; }
   if (appState.latestRequestId) focusCluster(appState.latestRequestId);
 });
 zoomInBtn.addEventListener('click', () => setZoom(clamp(state.scale * 1.15, 0.05, 3.0)));

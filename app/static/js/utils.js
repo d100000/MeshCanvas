@@ -88,9 +88,11 @@ export function showModal({
   requestAnimationFrame(() => overlay.classList.add('active'));
 
   const input = dialog.querySelector('.modal-input');
+  let onKey;
   const cleanup = () => {
     overlay.classList.remove('active');
     setTimeout(() => overlay.remove(), 180);
+    if (onKey) document.removeEventListener('keydown', onKey);
   };
 
   dialog.querySelector('.modal-cancel').addEventListener('click', () => { cleanup(); onCancel?.(); });
@@ -103,17 +105,15 @@ export function showModal({
   });
 
   // 键盘
-  const onKey = (e) => {
+  onKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       cleanup();
       onConfirm?.(isInput ? (input?.value ?? '') : true);
-      document.removeEventListener('keydown', onKey);
     }
     if (e.key === 'Escape') {
       cleanup();
       onCancel?.();
-      document.removeEventListener('keydown', onKey);
     }
   };
   document.addEventListener('keydown', onKey);

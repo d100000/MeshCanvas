@@ -34,7 +34,7 @@ ADMIN_STATIC_DIR = STATIC_DIR / "admin"
 
 # ── Asset versioning ─────────────────────────────────────────────────────────
 
-ASSET_VERSION = "20260401d"
+ASSET_VERSION = "20260401e"
 _STATIC_RE = _re.compile(r'(/static/[^"\'?]+\.(css|js|svg|png|ico))(\?v=[^"\']*)?')
 
 
@@ -1542,80 +1542,6 @@ async def _prepare_thread_for_stream(
         thread.search_bundle = search_bundle
         if search_bundle:
             _inject_search_bundle(thread.histories, search_bundle)
-
-
-async def _run_search_if_needed(
-    websocket: WebSocket,
-    search_service: FirecrawlSearchService,
-    request_id: str,
-    query: str,
-    think_enabled: bool,
-    enabled: bool,
-    database: LocalDatabase | None = None,
-    client_id: str | None = None,
-    user_id: int | None = None,
-    thread: ThreadState | None = None,
-) -> SearchBundle | None:
-    if not enabled:
-        return None
-    if not search_service.enabled:
-        payload = {
-            "type": "search_error",
-            "request_id": request_id,
-            "provider": "firecrawl",
-            "content": "未配置 Firecrawl API Key，已跳过联网搜索。",
-        }
-        await websocket.send_json(payload)
-        if database is not None:
-            await database.record_event(event_type="search_error", request_id=request_id, client_id=client_id, payload=payload)
-        return None
-
-    started_payload = {
-        "type": "search_started",
-        "request_id": request_id,
-        "provider": "firecrawl",
-        "query": query,
-        "think_enabled": think_enabled,
-    }
-    await websocket.send_json(started_payload)
-    if database is not None:
-        await database.record_event(event_type="search_started", request_id=request_id, client_id=client_id, payload=started_payload)
-
-    try:
-        search_bundle = await search_service.search(query=query, think_enabled=think_enabled)
-        if database is not None and user_id is not None:
-            cfg = await database.get_system_config()
-            try:
-                search_points = max(0.0, float(cfg.get("config_search_points_per_call", "0") or 0))
-            except (TypeError, ValueError):
-                search_points = 0.0
-            if search_points > 0 and thread is not None:
-                thread.charged_search_points += search_points
-        completed_payload = {
-            "type": "search_complete",
-            "request_id": request_id,
-            "provider": search_bundle.provider,
-            "query": search_bundle.query,
-            "count": len(search_bundle.items),
-            "results": [_serialize_search_item(item) for item in search_bundle.items],
-        }
-        await websocket.send_json(completed_payload)
-        if database is not None:
-            await database.record_event(event_type="search_complete", request_id=request_id, client_id=client_id, payload=completed_payload)
-        return search_bundle
-    except Exception as exc:
-        logger.warning("firecrawl search failed: request_id=%s query=%r error=%s", request_id, query, exc, exc_info=True)
-        error_payload = {
-            "type": "search_error",
-            "request_id": request_id,
-            "provider": "firecrawl",
-            "content": str(exc),
-        }
-        await websocket.send_json(error_payload)
-        if database is not None:
-            log_payload = {**error_payload, "error_detail": str(exc)}
-            await database.record_event(event_type="search_error", request_id=request_id, client_id=client_id, payload=log_payload)
-        return None
 
 
 async def _run_smart_search(

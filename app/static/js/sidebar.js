@@ -80,7 +80,7 @@ export async function loadCanvasState(canvasId) {
     renderMinimap();
     updateComposerHint();
   } catch (_) {
-    // fail silently
+    showAlert('画布加载失败，请刷新页面重试。');
   }
 }
 
@@ -105,6 +105,6 @@ export async function initCanvases() {
     renderCanvasList();
     await switchCanvas(appState.canvasesList[0].id);
   } catch (_) {
-    // fail silently — WebSocket still works
+    console.warn('画布列表加载失败，WebSocket 仍可正常使用。');
   }
 }

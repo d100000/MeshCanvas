@@ -11,7 +11,7 @@ import {
   CONCLUSION_NODE_WIDTH,
   getCluster, getSearchMode,
 } from './state.js';
-import { escapeHtml, escapeAttribute, getDisplayName, flashButtonLabel, summarizeText, showPreview } from './utils.js';
+import { escapeHtml, escapeAttribute, getDisplayName, flashButtonLabel, summarizeText, showPreview, showAlert } from './utils.js';
 import { scheduleRenderEdges } from './edges.js';
 import { scheduleRenderMinimap, updateClusterBounds } from './canvas.js';
 import { renderSelectionState, updateComposerHint, updateSelectionActions } from './selection.js';
@@ -665,7 +665,10 @@ function retryCurrentTurn(node, button) {
         canvas_id: appState.currentCanvasId,
       })
     );
-  } catch (_e) { return; }
+  } catch (_e) {
+    flashButtonLabel(button, '发送失败');
+    return;
+  }
   flashButtonLabel(button, '已发起');
 }
 
@@ -690,7 +693,10 @@ export function sendBranch(node, overrideMessage = null) {
         canvas_id: appState.currentCanvasId,
       })
     );
-  } catch (_e) { return; }
+  } catch (_e) {
+    showAlert('分支发送失败，请检查网络连接。');
+    return;
+  }
   node.branchInput.value = '';
   node.branchBox.classList.add('hidden');
 }
