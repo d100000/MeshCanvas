@@ -440,10 +440,18 @@ function applySearchEvent(userNode, payload) {
   userNode.searchPanel.classList.remove('hidden');
   if (payload.type === 'search_started') {
     setClusterState(userNode.requestId, { badgeText: '搜索中', isRunning: true });
-    userNode.searchQueryEl.textContent = payload.query || '正在搜索';
+    const qCount = payload.query_count || 1;
+    const isSmart = payload.smart_search;
+    userNode.searchQueryEl.textContent = isSmart
+      ? `多方向搜索（${qCount} 个方向）`
+      : (payload.query || '正在搜索');
     userNode.searchBadgeEl.textContent = '搜索中';
     userNode.searchToggleBtn?.classList.add('hidden');
-    userNode.searchResultsEl.innerHTML = '<div class="search-item-snippet">正在通过 Firecrawl 获取实时网页结果...</div>';
+    const details = payload.query_details || [];
+    const detailHtml = details.length > 0
+      ? details.map(d => `<div class="search-item-snippet search-direction">🔍 ${escapeHtml(d)}</div>`).join('')
+      : '<div class="search-item-snippet">正在通过 Firecrawl 获取实时网页结果...</div>';
+    userNode.searchResultsEl.innerHTML = detailHtml;
     setSearchCollapsed(userNode, false);
     updateClusterBounds(userNode.requestId);
     scheduleRenderEdges();
@@ -463,7 +471,11 @@ function applySearchEvent(userNode, payload) {
     return;
   }
   materializeClusterModels(userNode.requestId);
-  userNode.searchQueryEl.textContent = `${payload.query || ''} · ${payload.count || 0} 条结果`;
+  const queriesUsed = payload.queries_used || [];
+  const queryLabel = queriesUsed.length > 1
+    ? `${queriesUsed.length} 个搜索方向 · ${payload.count || 0} 条结果`
+    : `${payload.query || ''} · ${payload.count || 0} 条结果`;
+  userNode.searchQueryEl.textContent = queryLabel;
   userNode.searchBadgeEl.textContent = '已完成';
   setClusterState(userNode.requestId, { badgeText: '搜索完成，等待模型', isRunning: true });
   const results = payload.results || [];

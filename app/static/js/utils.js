@@ -137,3 +137,61 @@ export function showAlert(message) {
     onConfirm() {},
   });
 }
+
+// ── 全屏 Markdown 预览 ──────────────────────────────────────────────────────
+
+/**
+ * showPreview({ title, markdown, onClose? })
+ * 全屏弹窗展示渲染后的 Markdown 内容。
+ */
+export function showPreview({ title, markdown, onClose } = {}) {
+  const overlay = document.createElement('div');
+  overlay.className = 'preview-overlay';
+
+  const dialog = document.createElement('div');
+  dialog.className = 'preview-dialog';
+  dialog.innerHTML = `
+    <header class="preview-header">
+      <div class="preview-title">${escapeHtml(title)}</div>
+      <div class="preview-actions">
+        <button type="button" class="preview-btn preview-copy" title="复制 Markdown 源码">复制</button>
+        <button type="button" class="preview-btn preview-close" title="关闭 (Esc)">✕</button>
+      </div>
+    </header>
+    <div class="preview-body"></div>
+  `;
+
+  const body = dialog.querySelector('.preview-body');
+  body.innerHTML = window.renderMarkdown ? window.renderMarkdown(markdown) : escapeHtml(markdown);
+
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('active'));
+
+  const cleanup = () => {
+    overlay.classList.remove('active');
+    setTimeout(() => overlay.remove(), 200);
+    document.removeEventListener('keydown', onKey);
+    onClose?.();
+  };
+
+  dialog.querySelector('.preview-close').addEventListener('click', cleanup);
+  dialog.querySelector('.preview-copy').addEventListener('click', (e) => {
+    navigator.clipboard.writeText(markdown).then(() => {
+      const btn = e.currentTarget;
+      btn.textContent = '已复制';
+      setTimeout(() => { btn.textContent = '复制'; }, 1500);
+    });
+  });
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) cleanup();
+  });
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cleanup();
+    }
+  };
+  document.addEventListener('keydown', onKey);
+}

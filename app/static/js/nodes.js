@@ -11,7 +11,7 @@ import {
   CONCLUSION_NODE_WIDTH,
   getCluster, getSearchMode,
 } from './state.js';
-import { escapeHtml, escapeAttribute, getDisplayName, flashButtonLabel, summarizeText } from './utils.js';
+import { escapeHtml, escapeAttribute, getDisplayName, flashButtonLabel, summarizeText, showPreview } from './utils.js';
 import { scheduleRenderEdges } from './edges.js';
 import { scheduleRenderMinimap, updateClusterBounds } from './canvas.js';
 import { renderSelectionState, updateComposerHint, updateSelectionActions } from './selection.js';
@@ -327,6 +327,7 @@ export function createModelNode({ nodeId, requestId, model, x, y }) {
     <div class="tab-panels"></div>
     <div class="node-actions">
       <div class="node-actions-left">
+        <button type="button" class="small-btn preview-btn-trigger">预览</button>
         <button type="button" class="small-btn copy-current">复制当前</button>
         <button type="button" class="small-btn copy-all">复制全部</button>
         <button type="button" class="small-btn retry-current">重试当前</button>
@@ -374,6 +375,14 @@ export function createModelNode({ nodeId, requestId, model, x, y }) {
   });
   root.querySelector('.branch-send').addEventListener('click', () => {
     sendBranch(node);
+  });
+  root.querySelector('.preview-btn-trigger').addEventListener('click', () => {
+    const turn = node.turns.get(node.activeRound);
+    if (!turn || !turn.raw) return;
+    showPreview({
+      title: getDisplayName(model),
+      markdown: turn.raw,
+    });
   });
   root.querySelector('.copy-current').addEventListener('click', (event) => {
     copyCurrentTurn(node, event.currentTarget);

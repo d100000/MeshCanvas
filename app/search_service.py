@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 
@@ -25,14 +26,17 @@ class SearchBundle:
     query: str
     items: list[SearchItem]
     provider: str = "firecrawl"
+    queries_used: list[str] = field(default_factory=list)
 
     def as_prompt_block(self) -> str:
         if not self.items:
             return "未找到可用联网搜索结果。"
 
+        queries_desc = "、".join(self.queries_used) if self.queries_used else self.query
         sections: list[str] = [
-            f"以下是通过 Firecrawl 实时联网搜索获得的资料，请优先基于这些资料回答，并在结尾给出参考来源链接。",
-            f"搜索词：{self.query}",
+            f"以下是通过 Firecrawl 实时联网搜索获得的资料（共 {len(self.items)} 条，覆盖多个搜索方向），"
+            f"请优先基于这些资料回答，并在结尾给出参考来源链接。",
+            f"搜索方向：{queries_desc}",
         ]
         for index, item in enumerate(self.items, start=1):
             excerpt = item.markdown_excerpt or item.snippet
@@ -164,4 +168,63 @@ class FirecrawlSearchService:
                 query, elapsed_ms, list(raw.keys()), list(data.keys()),
             )
 
-        return SearchBundle(query=query, items=items)
+        return SearchBundle(query=query, items=items, queries_used=[query])
+
+    async def search_batch(
+        self,
+        queries: list[dict[str, str]],
+        limit_per_query: int = 5,
+    ) -> SearchBundle:
+        """并行执行多个搜索查询，合并去重结果。
+
+        queries: [{"query": "...", "purpose": "..."}, ...]
+        """
+        if not self.enabled or not queries:
+            combined_q = " / ".join(q.get("query", "") for q in queries[:3])
+            return SearchBundle(query=combined_q, items=[])
+
+        query_strings = [q.get("query", "").strip() for q in queries if q.get("query", "").strip()]
+        if not query_strings:
+            return SearchBundle(query="", items=[])
+
+        logger.info(
+            "firecrawl batch search: %d queries, limit_per_query=%d, queries=%s",
+            len(query_strings), limit_per_query,
+            [q[:60] for q in query_strings],
+        )
+
+        tasks = [
+            self.search(query=q, limit=limit_per_query)
+            for q in query_strings
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        seen_urls: set[str] = set()
+        merged_items: list[SearchItem] = []
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning("firecrawl batch sub-query failed: %s", result)
+                continue
+            for item in result.items:
+                url_key = item.url.rstrip("/").lower()
+                if url_key not in seen_urls:
+                    seen_urls.add(url_key)
+                    item.rank = len(merged_items) + 1
+                    merged_items.append(item)
+
+        combined_query = " / ".join(query_strings[:5])
+        if len(query_strings) > 5:
+            combined_query += f" 等{len(query_strings)}个方向"
+
+        logger.info(
+            "firecrawl batch OK: queries=%d total_results=%d unique=%d",
+            len(query_strings), sum(
+                len(r.items) for r in results if not isinstance(r, Exception)
+            ), len(merged_items),
+        )
+
+        return SearchBundle(
+            query=combined_query,
+            items=merged_items,
+            queries_used=query_strings,
+        )

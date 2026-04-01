@@ -34,7 +34,7 @@ ADMIN_STATIC_DIR = STATIC_DIR / "admin"
 
 # ── Asset versioning ─────────────────────────────────────────────────────────
 
-ASSET_VERSION = "20260401b"
+ASSET_VERSION = "20260401c"
 _STATIC_RE = _re.compile(r'(/static/[^"\'?]+\.(css|js|svg|png|ico))(\?v=[^"\']*)?')
 
 
@@ -167,8 +167,8 @@ _ADMIN_MODEL_TEST_MAX_PREVIEW_CHARS = 120
 _ADMIN_MODEL_TEST_MAX_TOKENS = 16
 _ADMIN_MODEL_TEST_RATE_LIMIT = 12
 _PREPROCESS_TIMEOUT_SECONDS = 15
-_PREPROCESS_ORGANIZE_TIMEOUT_SECONDS = 20
-_PREPROCESS_MAX_TOKENS = 512
+_PREPROCESS_ORGANIZE_TIMEOUT_SECONDS = 30
+_PREPROCESS_MAX_TOKENS = 1024
 
 _CONCLUSION_TIMEOUT_SECONDS = 90
 _CONCLUSION_MAX_INPUT_CHARS = 16000
@@ -192,22 +192,55 @@ _CONCLUSION_SYSTEM_PROMPT = (
 )
 
 _PREPROCESS_ANALYZE_PROMPT = (
-    "你是搜索预处理助手。分析用户的问题，判断是否需要联网搜索来获取最新或外部信息。\n"
+    "你是搜索策略助手。分析用户的问题，判断是否需要联网搜索，并制定多方向搜索策略。\n"
     "请严格以 JSON 格式回复（不要输出其他内容）：\n"
-    '{"need_search": true或false, "keywords": ["搜索关键词1", "搜索关键词2"], "reason": "简要说明"}\n\n'
+    "{\n"
+    '  "need_search": true或false,\n'
+    '  "complexity": "simple" 或 "medium" 或 "complex",\n'
+    '  "queries": [\n'
+    '    {"query": "搜索关键词短语1", "purpose": "搜索目的1"},\n'
+    '    {"query": "搜索关键词短语2", "purpose": "搜索目的2"}\n'
+    '  ],\n'
+    '  "reason": "简要说明"\n'
+    "}\n\n"
     "判断原则：\n"
     "- 需要最新信息、时事新闻、具体数据、产品对比、技术文档等 → need_search=true\n"
-    "- 纯粹的逻辑推理、创意写作、代码编写、数学计算等 → need_search=false\n"
-    "- keywords 应是精炼的搜索关键词（2-4个），不是原文复述\n"
+    "- 纯粹的逻辑推理、创意写作、代码编写、数学计算等 → need_search=false\n\n"
+    "复杂度与搜索方向数量：\n"
+    "- simple（简单事实查询）：2-3 个搜索方向\n"
+    "- medium（多维度分析）：3-5 个搜索方向\n"
+    "- complex（深度研究、行业分析、多领域交叉）：5-8 个搜索方向\n\n"
+    "每个 query 必须是独立的搜索关键词短语，从不同角度覆盖问题。\n"
+    "不要照搬用户原文，要提炼出精准的搜索词。\n"
+    "不同 query 之间应有明显的角度差异，避免重复搜索相似内容。\n"
+)
+
+_SMART_SEARCH_DEPTH_PROMPT = (
+    "你是搜索深度评估助手。根据用户问题和已有搜索结果，判断是否需要进一步深入搜索。\n"
+    "请严格以 JSON 格式回复（不要输出其他内容）：\n"
+    "{\n"
+    '  "need_deeper": true或false,\n'
+    '  "queries": [\n'
+    '    {"query": "补充搜索词1", "purpose": "需要补充的维度1"}\n'
+    '  ],\n'
+    '  "reason": "评估说明"\n'
+    "}\n\n"
+    "评估原则：\n"
+    "- 若已有结果已充分覆盖用户问题的各个维度 → need_deeper=false\n"
+    "- 若某些关键维度（如最新数据、竞品对比、风险分析等）缺失 → need_deeper=true\n"
+    "- 补充搜索应聚焦于缺失的维度，不要重复已有内容\n"
+    "- 补充搜索不超过 3-5 个新方向\n"
 )
 
 _PREPROCESS_ORGANIZE_PROMPT = (
-    "你是搜索结果整理助手。请根据用户的原始问题，对以下搜索结果进行整理：\n"
+    "你是搜索结果整理助手。你收到的是多方向搜索的综合结果（可能包含 10-50 条来源）。\n"
+    "请根据用户的原始问题，对搜索结果进行深度整理：\n"
     "1. 去除重复和不相关的内容\n"
-    "2. 按相关度排序\n"
-    "3. 提取关键信息，保留来源链接\n"
-    "4. 输出精炼的参考资料摘要（Markdown 格式）\n\n"
-    "要求简洁、准确、有结构，控制在 800 字以内。"
+    "2. 按主题维度分组，按相关度排序\n"
+    "3. 提取关键信息、核心数据、重要观点，保留来源链接\n"
+    "4. 输出结构化的参考资料摘要（Markdown 格式）\n\n"
+    "要求：信息密度高、覆盖面广、结构清晰，控制在 1500 字以内。\n"
+    "在每条关键信息后标注来源编号，如 [1][3]。"
 )
 
 # ── ThreadState dataclass ────────────────────────────────────────────────────
@@ -1234,12 +1267,20 @@ async def _preprocess_analyze(
         logger.warning("preprocess analyze returned invalid JSON: %s", cleaned[:200])
         return None
 
+    # 兼容旧格式：如果只有 keywords 没有 queries，转换为 queries 格式
+    if "queries" not in result and "keywords" in result:
+        keywords = result.get("keywords", [])
+        result["queries"] = [{"query": " ".join(keywords), "purpose": "关键词搜索"}] if keywords else []
+        result["complexity"] = "simple"
+
     await send_event(websocket, {
         "type": "preprocess_result",
         "request_id": request_id,
         "model": preprocess_model,
         "need_search": bool(result.get("need_search", False)),
-        "keywords": result.get("keywords", []),
+        "complexity": str(result.get("complexity", "simple")),
+        "queries": result.get("queries", []),
+        "keywords": [q.get("query", "") for q in result.get("queries", [])],
         "reason": str(result.get("reason", ""))[:200],
     })
     return result
@@ -1264,8 +1305,8 @@ async def _preprocess_organize_results(
     model_id = id_map.get(preprocess_model, preprocess_model)
 
     raw_results = search_bundle.as_prompt_block()
-    if len(raw_results) > 12000:
-        raw_results = raw_results[:12000] + "\n\n[结果已截断]"
+    if len(raw_results) > 20000:
+        raw_results = raw_results[:20000] + "\n\n[结果已截断]"
 
     llm = _create_llm_client_from_settings(user_settings)
     try:
@@ -1293,6 +1334,79 @@ async def _preprocess_organize_results(
             "organized_markdown": organized[:3000],
         })
     return organized
+
+
+async def _evaluate_search_depth(
+    user_message: str,
+    existing_items: list,
+    *,
+    user_settings: dict,
+    websocket: WebSocket,
+    request_id: str,
+    send_event,
+) -> list[dict[str, str]]:
+    """评估已有搜索结果是否充分，返回需要补充搜索的 queries 列表（可为空）。"""
+    preprocess_model = user_settings.get("preprocess_model", "")
+    if not preprocess_model or not existing_items:
+        return []
+
+    models = user_settings.get("models", [])
+    id_map = _build_model_id_map(models)
+    model_id = id_map.get(preprocess_model, preprocess_model)
+
+    existing_summary = "\n".join(
+        f"[{i+1}] {item.title} — {item.snippet[:80]}"
+        for i, item in enumerate(existing_items[:20])
+    )
+
+    llm = _create_llm_client_from_settings(user_settings)
+    try:
+        llm_resp = await asyncio.wait_for(
+            llm.complete(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": _SMART_SEARCH_DEPTH_PROMPT},
+                    {"role": "user", "content": f"用户问题：{user_message}\n\n已有搜索结果（{len(existing_items)} 条）：\n{existing_summary}"},
+                ],
+                temperature=0,
+                max_tokens=_PREPROCESS_MAX_TOKENS,
+            ),
+            timeout=_PREPROCESS_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning("search depth evaluation failed request_id=%s error=%s", request_id, exc)
+        return []
+
+    raw_text = llm_resp.text
+    if not raw_text:
+        return []
+
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+    try:
+        result = _json.loads(cleaned)
+    except _json.JSONDecodeError:
+        logger.warning("search depth eval returned invalid JSON: %s", cleaned[:200])
+        return []
+
+    if not result.get("need_deeper", False):
+        return []
+
+    extra_queries = result.get("queries", [])
+    if extra_queries:
+        await send_event(websocket, {
+            "type": "search_depth_eval",
+            "request_id": request_id,
+            "need_deeper": True,
+            "extra_query_count": len(extra_queries),
+            "reason": str(result.get("reason", ""))[:200],
+        })
+    return extra_queries
 
 
 async def _prepare_thread_for_stream(
@@ -1323,26 +1437,72 @@ async def _prepare_thread_for_stream(
         )
         if analysis is not None:
             need_search = bool(analysis.get("need_search", False))
-            keywords = analysis.get("keywords", [])
+            queries = analysis.get("queries", [])
+            complexity = str(analysis.get("complexity", "simple"))
 
             if not need_search and search_mode == "auto":
                 return
             if not need_search and search_mode is True:
-                pass  # forced search, use original message
-            else:
-                search_query = " ".join(keywords) if keywords else thread.user_message
-                search_bundle = await _run_search_if_needed(
+                # 强制搜索但分析说不需要——用原始消息做单次搜索
+                queries = [{"query": thread.user_message, "purpose": "用户原始问题"}]
+                complexity = "simple"
+
+            if queries:
+                # ── 多方向智能搜索 ──
+                limit_map = {"simple": 5, "medium": 5, "complex": 8}
+                limit_per_q = limit_map.get(complexity, 5)
+
+                search_bundle = await _run_smart_search(
                     websocket=websocket,
                     search_service=search_service,
                     request_id=thread.request_id,
-                    query=search_query,
-                    think_enabled=thread.think_enabled,
-                    enabled=True,
+                    queries=queries,
+                    limit_per_query=limit_per_q,
                     database=database,
                     client_id=client_id,
                     user_id=user_id,
                     thread=thread,
+                    send_event=_send,
+                )
+
+                # ── 深度评估：complex 问题自动判断是否需要补充搜索 ──
+                if (
+                    complexity == "complex"
+                    and search_bundle
+                    and search_bundle.items
+                    and len(search_bundle.items) < 50
+                ):
+                    extra_queries = await _evaluate_search_depth(
+                        thread.user_message,
+                        search_bundle.items,
+                        user_settings=user_settings,
+                        websocket=websocket,
+                        request_id=thread.request_id,
+                        send_event=_send,
                     )
+                    if extra_queries:
+                        deeper_bundle = await _run_smart_search(
+                            websocket=websocket,
+                            search_service=search_service,
+                            request_id=thread.request_id,
+                            queries=extra_queries,
+                            limit_per_query=limit_per_q,
+                            database=database,
+                            client_id=client_id,
+                            user_id=user_id,
+                            thread=thread,
+                            send_event=_send,
+                        )
+                        if deeper_bundle and deeper_bundle.items:
+                            # 合并结果，去重
+                            seen = {it.url.rstrip("/").lower() for it in search_bundle.items}
+                            for item in deeper_bundle.items:
+                                if item.url.rstrip("/").lower() not in seen:
+                                    seen.add(item.url.rstrip("/").lower())
+                                    item.rank = len(search_bundle.items) + 1
+                                    search_bundle.items.append(item)
+                            search_bundle.queries_used.extend(deeper_bundle.queries_used)
+
                 if search_bundle and search_bundle.items:
                     organized = await _preprocess_organize_results(
                         thread.user_message, search_bundle,
@@ -1365,18 +1525,19 @@ async def _prepare_thread_for_stream(
         if search_mode == "auto":
             return
 
+    # 无预处理模型时的回退：多方向搜索（使用简单拆分策略）
     if search_mode is True or search_mode == "auto":
-        search_bundle = await _run_search_if_needed(
+        search_bundle = await _run_smart_search_fallback(
             websocket=websocket,
             search_service=search_service,
             request_id=thread.request_id,
-            query=thread.user_message,
+            user_message=thread.user_message,
             think_enabled=thread.think_enabled,
-            enabled=True,
             database=database,
             client_id=client_id,
             user_id=user_id,
             thread=thread,
+            send_event=_send,
         )
         thread.search_bundle = search_bundle
         if search_bundle:
@@ -1455,6 +1616,131 @@ async def _run_search_if_needed(
             log_payload = {**error_payload, "error_detail": str(exc)}
             await database.record_event(event_type="search_error", request_id=request_id, client_id=client_id, payload=log_payload)
         return None
+
+
+async def _run_smart_search(
+    websocket: WebSocket,
+    search_service: FirecrawlSearchService,
+    request_id: str,
+    queries: list[dict[str, str]],
+    limit_per_query: int = 5,
+    database: LocalDatabase | None = None,
+    client_id: str | None = None,
+    user_id: int | None = None,
+    thread: ThreadState | None = None,
+    send_event=None,
+) -> SearchBundle | None:
+    """执行多方向并行搜索，合并去重结果。"""
+    if not search_service.enabled:
+        payload = {
+            "type": "search_error",
+            "request_id": request_id,
+            "provider": "firecrawl",
+            "content": "未配置 Firecrawl API Key，已跳过联网搜索。",
+        }
+        await websocket.send_json(payload)
+        if database is not None:
+            await database.record_event(event_type="search_error", request_id=request_id, client_id=client_id, payload=payload)
+        return None
+
+    query_descs = [f"{q.get('query', '')}（{q.get('purpose', '')}）" for q in queries[:8]]
+    started_payload = {
+        "type": "search_started",
+        "request_id": request_id,
+        "provider": "firecrawl",
+        "query": " / ".join(q.get("query", "") for q in queries[:5]),
+        "think_enabled": thread.think_enabled if thread else False,
+        "smart_search": True,
+        "query_count": len(queries),
+        "query_details": query_descs,
+    }
+    await websocket.send_json(started_payload)
+    if database is not None:
+        await database.record_event(event_type="search_started", request_id=request_id, client_id=client_id, payload=started_payload)
+
+    try:
+        search_bundle = await search_service.search_batch(
+            queries=queries,
+            limit_per_query=limit_per_query,
+        )
+        # 计费：按搜索方向数计费
+        if database is not None and user_id is not None:
+            cfg = await database.get_system_config()
+            try:
+                search_points = max(0.0, float(cfg.get("config_search_points_per_call", "0") or 0))
+            except (TypeError, ValueError):
+                search_points = 0.0
+            if search_points > 0 and thread is not None:
+                thread.charged_search_points += search_points * len(queries)
+
+        completed_payload = {
+            "type": "search_complete",
+            "request_id": request_id,
+            "provider": search_bundle.provider,
+            "query": search_bundle.query,
+            "count": len(search_bundle.items),
+            "results": [_serialize_search_item(item) for item in search_bundle.items],
+            "smart_search": True,
+            "queries_used": search_bundle.queries_used,
+        }
+        await websocket.send_json(completed_payload)
+        if database is not None:
+            await database.record_event(event_type="search_complete", request_id=request_id, client_id=client_id, payload=completed_payload)
+        return search_bundle
+    except Exception as exc:
+        logger.warning("smart search failed: request_id=%s error=%s", request_id, exc, exc_info=True)
+        error_payload = {
+            "type": "search_error",
+            "request_id": request_id,
+            "provider": "firecrawl",
+            "content": str(exc),
+        }
+        await websocket.send_json(error_payload)
+        if database is not None:
+            log_payload = {**error_payload, "error_detail": str(exc)}
+            await database.record_event(event_type="search_error", request_id=request_id, client_id=client_id, payload=log_payload)
+        return None
+
+
+async def _run_smart_search_fallback(
+    websocket: WebSocket,
+    search_service: FirecrawlSearchService,
+    request_id: str,
+    user_message: str,
+    think_enabled: bool,
+    database: LocalDatabase | None = None,
+    client_id: str | None = None,
+    user_id: int | None = None,
+    thread: ThreadState | None = None,
+    send_event=None,
+) -> SearchBundle | None:
+    """无预处理模型时的回退搜索：用原始消息搜索两次（原文 + 截断关键词），覆盖 10+ 站点。"""
+    # 构造两个搜索方向：原始问题 + 简化关键词
+    msg = user_message.strip()
+    # 截取前 80 字符作为简化查询
+    short_query = msg[:80].strip() if len(msg) > 80 else msg
+    queries = [
+        {"query": msg[:200], "purpose": "完整问题搜索"},
+        {"query": short_query, "purpose": "关键词搜索"},
+    ]
+    # 如果消息很长，再加一个尾部关键词搜索
+    if len(msg) > 200:
+        tail = msg[80:200].strip()
+        if tail:
+            queries.append({"query": tail, "purpose": "补充维度搜索"})
+
+    return await _run_smart_search(
+        websocket=websocket,
+        search_service=search_service,
+        request_id=request_id,
+        queries=queries,
+        limit_per_query=6 if think_enabled else 5,
+        database=database,
+        client_id=client_id,
+        user_id=user_id,
+        thread=thread,
+        send_event=send_event,
+    )
 
 
 def _serialize_search_item(item: SearchItem) -> dict[str, str | int]:

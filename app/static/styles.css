@@ -2283,3 +2283,163 @@ a.tool-btn {
 .modal-btn.modal-confirm.danger:hover {
   background: #b91c1c;
 }
+
+/* ── Preview fullscreen modal ──────────────────────────────────────────────── */
+
+.preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0);
+  backdrop-filter: blur(0);
+  transition: background 0.2s ease, backdrop-filter 0.2s ease;
+}
+.preview-overlay.active {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+}
+.preview-dialog {
+  width: 90vw;
+  max-width: 900px;
+  height: 88vh;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
+  transform: scale(0.95) translateY(12px);
+  opacity: 0;
+  transition: transform 0.24s ease, opacity 0.24s ease;
+  overflow: hidden;
+}
+.preview-overlay.active .preview-dialog {
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  flex-shrink: 0;
+}
+.preview-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text, #1a1a2e);
+}
+.preview-actions {
+  display: flex;
+  gap: 8px;
+}
+.preview-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e5e7eb);
+  background: var(--surface, #fff);
+  color: var(--text, #1a1a2e);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.preview-btn:hover {
+  background: var(--bg, #f5f5f5);
+}
+.preview-close {
+  font-size: 16px;
+  padding: 6px 10px;
+  line-height: 1;
+}
+.preview-body {
+  flex: 1;
+  overflow: auto;
+  padding: 28px 36px 40px;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--text, #1a1a2e);
+}
+.preview-body h1,
+.preview-body h2,
+.preview-body h3 {
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.preview-body h1 { font-size: 1.6em; }
+.preview-body h2 { font-size: 1.35em; }
+.preview-body h3 { font-size: 1.15em; }
+.preview-body p {
+  margin: 0.6em 0;
+}
+.preview-body pre {
+  background: var(--bg, #f5f5f5);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.preview-body code {
+  background: var(--bg, #f5f5f5);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.preview-body pre code {
+  background: none;
+  padding: 0;
+}
+.preview-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+}
+.preview-body th,
+.preview-body td {
+  border: 1px solid var(--border, #e5e7eb);
+  padding: 8px 12px;
+  text-align: left;
+}
+.preview-body th {
+  background: var(--bg, #f5f5f5);
+  font-weight: 600;
+}
+.preview-body blockquote {
+  border-left: 3px solid var(--accent, #7B26E8);
+  padding-left: 16px;
+  margin: 1em 0;
+  color: var(--muted, #6b7280);
+}
+.preview-body img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+.preview-body ul,
+.preview-body ol {
+  padding-left: 1.5em;
+}
+.preview-body li {
+  margin: 0.3em 0;
+}
+
+/* 搜索方向指示样式 */
+.search-direction {
+  color: var(--accent, #7B26E8);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+/* 预览按钮高亮 */
+.small-btn.preview-btn-trigger {
+  color: var(--accent, #7B26E8);
+  border-color: rgba(123, 38, 232, 0.3);
+}
+.small-btn.preview-btn-trigger:hover {
+  background: rgba(123, 38, 232, 0.08);
+}
