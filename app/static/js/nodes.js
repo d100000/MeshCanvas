@@ -143,7 +143,12 @@ export function scheduleTurnRender(turn, force = false) {
     turn.renderTimer = null;
     updateTurnSummary(turn);
     turn.mdEl.innerHTML = window.renderMarkdown ? window.renderMarkdown(turn.raw) : escapeHtml(turn.raw);
-    turn.panel.scrollTop = turn.panel.scrollHeight;
+    // 智能滚动：仅当用户已在底部附近时才自动滚动，避免打断回读
+    const threshold = 60;
+    const isNearBottom = turn.panel.scrollHeight - turn.panel.scrollTop - turn.panel.clientHeight < threshold;
+    if (isNearBottom) {
+      turn.panel.scrollTop = turn.panel.scrollHeight;
+    }
   };
 
   if (force) {
@@ -273,7 +278,9 @@ export function createUserNode({
     </div>
   `;
   root.querySelector('.user-message').textContent = (displayMessage && contextNodeCount > 0) ? displayMessage : content;
+  root.classList.add('entering');
   stageEl.appendChild(root);
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('entering')));
   bindNodeInteractions(root, nodeId, requestId);
   const node = {
     nodeId,
@@ -335,7 +342,9 @@ export function createModelNode({ nodeId, requestId, model, x, y }) {
       </div>
     </div>
   `;
+  root.classList.add('entering');
   stageEl.appendChild(root);
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('entering')));
   bindNodeInteractions(root, nodeId, requestId);
 
   const node = {
@@ -379,6 +388,10 @@ export function createModelNode({ nodeId, requestId, model, x, y }) {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       sendBranch(node);
     }
+  });
+  node.branchInput.addEventListener('input', () => {
+    node.branchInput.style.height = 'auto';
+    node.branchInput.style.height = Math.min(node.branchInput.scrollHeight, 160) + 'px';
   });
 }
 
@@ -426,7 +439,9 @@ export function createConclusionNode({ nodeId, requestId, x, y, model, markdown,
     mdEl.textContent = '结论生成失败';
   }
 
+  root.classList.add('entering');
   stageEl.appendChild(root);
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('entering')));
   bindNodeInteractions(root, nodeId, requestId);
 
   const node = {

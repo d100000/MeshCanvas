@@ -50,3 +50,90 @@ export function flashButtonLabel(button, label) {
     button.textContent = original;
   }, 1600);
 }
+
+// ── 通用模态框 ──────────────────────────────────────────────────────────────
+
+/**
+ * showModal({ title, message?, inputValue?, placeholder?, danger?, confirmText?, onConfirm, onCancel? })
+ * 返回 Promise<string|boolean|null>：输入型返回字符串或 null（取消），确认型返回 true/false。
+ */
+export function showModal({
+  title,
+  message = '',
+  inputValue = '',
+  placeholder = '',
+  danger = false,
+  confirmText = '',
+  onConfirm,
+  onCancel,
+} = {}) {
+  const isInput = placeholder || inputValue;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const dialog = document.createElement('div');
+  dialog.className = `modal-dialog${danger ? ' modal-danger' : ''}`;
+  dialog.innerHTML = `
+    <div class="modal-title">${escapeHtml(title)}</div>
+    ${message ? `<div class="modal-message">${escapeHtml(message)}</div>` : ''}
+    ${isInput ? `<input class="modal-input" value="${escapeAttribute(inputValue)}" placeholder="${escapeAttribute(placeholder)}" autofocus>` : ''}
+    <div class="modal-actions">
+      <button type="button" class="modal-btn modal-cancel">取消</button>
+      <button type="button" class="modal-btn modal-confirm${danger ? ' danger' : ''}">${escapeHtml(confirmText || (danger ? '确认删除' : '确认'))}</button>
+    </div>
+  `;
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  // 入场动画
+  requestAnimationFrame(() => overlay.classList.add('active'));
+
+  const input = dialog.querySelector('.modal-input');
+  const cleanup = () => {
+    overlay.classList.remove('active');
+    setTimeout(() => overlay.remove(), 180);
+  };
+
+  dialog.querySelector('.modal-cancel').addEventListener('click', () => { cleanup(); onCancel?.(); });
+  dialog.querySelector('.modal-confirm').addEventListener('click', () => {
+    cleanup();
+    onConfirm?.(isInput ? (input?.value ?? '') : true);
+  });
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) { cleanup(); onCancel?.(); }
+  });
+
+  // 键盘
+  const onKey = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      cleanup();
+      onConfirm?.(isInput ? (input?.value ?? '') : true);
+      document.removeEventListener('keydown', onKey);
+    }
+    if (e.key === 'Escape') {
+      cleanup();
+      onCancel?.();
+      document.removeEventListener('keydown', onKey);
+    }
+  };
+  document.addEventListener('keydown', onKey);
+
+  if (input) {
+    input.focus();
+    input.select();
+  } else {
+    dialog.querySelector('.modal-confirm').focus();
+  }
+}
+
+/**
+ * showAlert(message) — 替代 window.alert()
+ */
+export function showAlert(message) {
+  showModal({
+    title: '提示',
+    message,
+    confirmText: '确定',
+    onConfirm() {},
+  });
+}

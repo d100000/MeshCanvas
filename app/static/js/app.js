@@ -11,9 +11,9 @@ import {
   DEFAULT_SCALE, MAX_MESSAGE_LENGTH, CONCLUSION_CONTEXT_MAX_CHARS,
   getSearchMode, selectionSummaryState,
 } from './state.js';
-import { clamp } from './utils.js';
+import { clamp, showModal } from './utils.js';
 import {
-  applyTransform, bindCanvasPan, setZoom, focusCluster,
+  applyTransform, bindCanvasPan, setZoom, focusCluster, fitAllNodes,
   renderMinimap, toggleSidebar,
 } from './canvas.js';
 import {
@@ -141,13 +141,12 @@ if (sidebarLogoutBtn) {
     }
   });
 }
-fitBtn.addEventListener('click', () => {
-  if (appState.latestRequestId) {
-    focusCluster(appState.latestRequestId);
-  }
+fitBtn.addEventListener('click', () => fitAllNodes());
+fitBtn.addEventListener('dblclick', () => {
+  if (appState.latestRequestId) focusCluster(appState.latestRequestId);
 });
-zoomInBtn.addEventListener('click', () => setZoom(clamp(state.scale * 1.12, 0.2, 1.8)));
-zoomOutBtn.addEventListener('click', () => setZoom(clamp(state.scale * 0.88, 0.2, 1.8)));
+zoomInBtn.addEventListener('click', () => setZoom(clamp(state.scale * 1.15, 0.05, 3.0)));
+zoomOutBtn.addEventListener('click', () => setZoom(clamp(state.scale * 0.85, 0.05, 3.0)));
 zoomResetBtn.addEventListener('click', () => setZoom(DEFAULT_SCALE));
 messageInput.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -158,23 +157,60 @@ messageInput.addEventListener('input', autoResizeComposer);
 if (sidebarCollapseBtn) sidebarCollapseBtn.addEventListener('click', () => toggleSidebar(false));
 if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', () => toggleSidebar(true));
 
-if (sidebarNewCanvasBtn) sidebarNewCanvasBtn.addEventListener('click', async () => {
-  const name = prompt('新画布名称：', '新画布') || '新画布';
-  const res = await fetch('/api/canvases', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'same-origin',
-    body: JSON.stringify({ name }),
+if (sidebarNewCanvasBtn) sidebarNewCanvasBtn.addEventListener('click', () => {
+  showModal({
+    title: '新建画布',
+    inputValue: '新画布',
+    placeholder: '输入画布名称',
+    async onConfirm(name) {
+      const canvasName = (name || '').trim() || '新画布';
+      const res = await fetch('/api/canvases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ name: canvasName }),
+      });
+      if (!res.ok) return;
+      const created = await res.json();
+      appState.canvasesList.push({ id: created.canvas_id, name: created.name });
+      await switchCanvas(created.canvas_id);
+    },
   });
-  if (!res.ok) return;
-  const created = await res.json();
-  appState.canvasesList.push({ id: created.canvas_id, name: created.name });
-  await switchCanvas(created.canvas_id);
 });
 
 document.addEventListener('click', (event) => {
   if (event.target.closest('.node, .composer-shell, .sidebar, .topbar, .selection-actions, .selected-chips')) return;
   clearSelection();
+});
+
+// ── Keyboard shortcuts ──────────────────────────────────────────────────────
+
+document.addEventListener('keydown', (e) => {
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+  if (e.key === 'Escape') {
+    clearSelection();
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+    e.preventDefault();
+    setZoom(clamp(state.scale * 1.15, 0.05, 3.0));
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+    e.preventDefault();
+    setZoom(clamp(state.scale * 0.85, 0.05, 3.0));
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+    e.preventDefault();
+    setZoom(DEFAULT_SCALE);
+  }
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault();
+    fitAllNodes();
+  }
+  if (e.key === 'f' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    if (appState.latestRequestId) focusCluster(appState.latestRequestId);
+  }
 });
 
 // ── Init ─────────────────────────────────────────────────────────────────────

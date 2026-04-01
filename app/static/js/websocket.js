@@ -10,7 +10,7 @@ import {
   CONCLUSION_NODE_WIDTH, MODEL_NODE_HEIGHT,
   updateBalanceDisplay,
 } from './state.js';
-import { escapeHtml, escapeAttribute, getDisplayName } from './utils.js';
+import { escapeHtml, escapeAttribute, getDisplayName, showAlert } from './utils.js';
 import { addEdge, renderEdges, scheduleRenderEdges } from './edges.js';
 import {
   renderMinimap, scheduleRenderMinimap, updateClusterBounds,
@@ -221,7 +221,7 @@ function handleEvent(payload) {
       } else if (payload.request_id) {
         setClusterState(payload.request_id, { isRunning: false, isCancelling: false, badgeText: '请求失败' });
       } else {
-        alert(payload.content);
+        showAlert(payload.content);
       }
       break;
     case 'cancel_requested':

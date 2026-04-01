@@ -6,7 +6,7 @@ import {
   appState,
   sidebarCanvasListEl,
 } from './state.js';
-import { escapeHtml, escapeAttribute } from './utils.js';
+import { escapeHtml, escapeAttribute, showModal, showAlert } from './utils.js';
 import { clearCanvas, renderMinimap } from './canvas.js';
 import { updateComposerHint } from './selection.js';
 import { replayCluster } from './clusters.js';
@@ -31,18 +31,24 @@ export function renderCanvasList() {
         e.stopPropagation();
         const id = delBtn.dataset.id;
         if (appState.canvasesList.length <= 1) {
-          alert('至少需要保留一个画布。');
+          showAlert('至少需要保留一个画布。');
           return;
         }
-        if (!confirm('确认删除该画布及其所有内容？此操作不可撤销。')) return;
-        const res = await fetch(`/api/canvases/${id}`, { method: 'DELETE', credentials: 'same-origin' });
-        if (!res.ok) return;
-        appState.canvasesList = appState.canvasesList.filter((c) => c.id !== id);
-        if (appState.currentCanvasId === id) {
-          await switchCanvas(appState.canvasesList[0].id);
-        } else {
-          renderCanvasList();
-        }
+        showModal({
+          title: '删除画布',
+          message: '确认删除该画布及其所有内容？此操作不可撤销。',
+          danger: true,
+          async onConfirm() {
+            const res = await fetch(`/api/canvases/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+            if (!res.ok) return;
+            appState.canvasesList = appState.canvasesList.filter((c) => c.id !== id);
+            if (appState.currentCanvasId === id) {
+              await switchCanvas(appState.canvasesList[0].id);
+            } else {
+              renderCanvasList();
+            }
+          },
+        });
         return;
       }
       const item = e.target.closest('.sidebar-canvas-item');
