@@ -34,13 +34,20 @@ ADMIN_STATIC_DIR = STATIC_DIR / "admin"
 
 # ── Asset versioning ─────────────────────────────────────────────────────────
 
-ASSET_VERSION = "20260401e"
+ASSET_VERSION = "20260402a"
 _STATIC_RE = _re.compile(r'(/static/[^"\'?]+\.(css|js|svg|png|ico))(\?v=[^"\']*)?')
+# 匹配 ES module 的 import 语句: from './xxx.js' 或 from "./xxx.js"
+_ES_IMPORT_RE = _re.compile(r"""(from\s+['"])(\./[^'"?]+\.js)(\?v=[^'"]*)?(['"])""")
 
 
 def _inject_asset_version(html: str) -> str:
     """给 HTML 中所有 /static/ 资源引用追加 ?v=ASSET_VERSION。"""
     return _STATIC_RE.sub(rf'\1?v={ASSET_VERSION}', html)
+
+
+def _inject_module_version(js_source: str) -> str:
+    """给 ES module import 语句中的相对路径追加 ?v=ASSET_VERSION。"""
+    return _ES_IMPORT_RE.sub(rf'\g<1>\2?v={ASSET_VERSION}\4', js_source)
 
 
 # ── Admin login error text ───────────────────────────────────────────────────

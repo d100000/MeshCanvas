@@ -130,7 +130,11 @@ async def log_http_request(request: Request, call_next):
     if request.url.path.startswith("/static/"):
         ext = request.url.path.rsplit(".", 1)[-1].lower() if "." in request.url.path else ""
         if ext in ("js", "css", "png", "jpg", "jpeg", "webp", "svg", "ico", "woff", "woff2"):
-            response.headers.setdefault("Cache-Control", "public, max-age=3600")
+            # 带 ?v= 版本参数的资源可以长缓存；ES module 子模块 import 不带 ?v= 需每次重新验证
+            if "v=" in str(request.url.query):
+                response.headers.setdefault("Cache-Control", "public, max-age=86400, immutable")
+            else:
+                response.headers.setdefault("Cache-Control", "no-cache")
         elif ext in ("html",):
             response.headers.setdefault("Cache-Control", "no-store")
 

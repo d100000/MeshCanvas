@@ -64,6 +64,7 @@ export function renderCanvasList() {
 
 export async function switchCanvas(canvasId) {
   appState.currentCanvasId = canvasId;
+  try { localStorage.setItem('lastCanvasId', canvasId); } catch (_) {}
   renderCanvasList();
   await loadCanvasState(canvasId);
 }
@@ -103,7 +104,15 @@ export async function initCanvases() {
       appState.canvasesList = [{ id: created.canvas_id, name: created.name }];
     }
     renderCanvasList();
-    await switchCanvas(appState.canvasesList[0].id);
+    // 恢复上次使用的画布，若不存在则回退到第一个
+    let targetId = appState.canvasesList[0].id;
+    try {
+      const last = localStorage.getItem('lastCanvasId');
+      if (last && appState.canvasesList.some((c) => c.id === last)) {
+        targetId = last;
+      }
+    } catch (_) {}
+    await switchCanvas(targetId);
   } catch (_) {
     console.warn('画布列表加载失败，WebSocket 仍可正常使用。');
   }

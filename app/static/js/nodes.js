@@ -436,6 +436,7 @@ export function createConclusionNode({ nodeId, requestId, x, y, model, markdown,
       <div class="md conclusion-md"></div>
     </div>
     <div class="conclusion-actions">
+      <button type="button" class="small-btn preview-btn-trigger">预览</button>
       <button type="button" class="small-btn conclusion-copy">复制 Markdown</button>
       <button type="button" class="small-btn conclusion-download">下载 MD</button>
       <button type="button" class="small-btn conclusion-retry">重试结论</button>
@@ -509,6 +510,14 @@ export function createConclusionNode({ nodeId, requestId, x, y, model, markdown,
 
   root.querySelector('.conclusion-retry').addEventListener('click', (e) => {
     retryConclusion(requestId, e.currentTarget);
+  });
+
+  root.querySelector('.preview-btn-trigger').addEventListener('click', () => {
+    if (!node.markdown) return;
+    showPreview({
+      title: '最终结论',
+      markdown: node.markdown,
+    });
   });
 
   return node;
