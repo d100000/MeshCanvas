@@ -912,6 +912,80 @@ button {
   font-size: 11px;
 }
 
+/* ── 骨架屏 Loading ──────────────────────────────────────────────── */
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(123,38,232,0.06) 25%, rgba(123,38,232,0.12) 50%, rgba(123,38,232,0.06) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.skeleton-line.w80 { width: 80%; }
+.skeleton-line.w60 { width: 60%; animation-delay: 0.15s; }
+.skeleton-line.w90 { width: 90%; animation-delay: 0.3s; }
+
+/* Badge spinner */
+.badge.generating {
+  color: var(--accent-strong);
+  border-color: rgba(123, 38, 232, 0.3);
+}
+
+.badge.generating::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  border: 2px solid rgba(123, 38, 232, 0.2);
+  border-top-color: var(--accent-strong);
+  border-radius: 50%;
+  animation: auth-spin 0.6s linear infinite;
+  vertical-align: middle;
+}
+
+/* ── 空白响应占位 ────────────────────────────────────────────────── */
+
+.empty-response-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--muted);
+}
+
+.empty-response-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.empty-response-hint p {
+  margin: 0 0 6px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.empty-response-sub {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
 .md {
   font-size: 14px;
   line-height: 1.7;

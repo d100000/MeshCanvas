@@ -99,6 +99,12 @@ export function ensureModelTurn(requestId, model, round) {
   node.tabsEl.appendChild(button);
   node.panelsEl.appendChild(panel);
 
+  // 插入骨架屏 Loading 占位
+  const skeletonEl = document.createElement('div');
+  skeletonEl.className = 'skeleton-loading';
+  skeletonEl.innerHTML = '<div class="skeleton-line w80"></div><div class="skeleton-line w60"></div><div class="skeleton-line w90"></div>';
+  panel.querySelector('.md').after(skeletonEl);
+
   const turn = {
     round,
     btn: button,
@@ -108,6 +114,7 @@ export function ensureModelTurn(requestId, model, round) {
     summaryEl: button.querySelector('.tab-btn-summary'),
     summaryChipEl: panel.querySelector('.turn-summary-chip'),
     mdEl: panel.querySelector('.md'),
+    skeletonEl,
     raw: '',
     summary: '等待摘要',
     renderTimer: null,
@@ -148,6 +155,8 @@ export function scheduleTurnRender(turn, force = false) {
       const len = turn.raw.length;
       turn.wordCountEl.textContent = len >= 1000 ? `${(len / 1000).toFixed(1)}k 字` : `${len} 字`;
     }
+    // 移除骨架屏（如果有）
+    if (turn.skeletonEl) { turn.skeletonEl.remove(); turn.skeletonEl = null; }
     turn.mdEl.innerHTML = window.renderMarkdown ? window.renderMarkdown(turn.raw) : escapeHtml(turn.raw);
     // 智能滚动：仅当用户已在底部附近时才自动滚动，避免打断回读
     const threshold = 60;
@@ -187,6 +196,8 @@ export function setNodeState(requestId, model, text) {
   const node = getModelNode(requestId, model);
   if (!node) return;
   node.badge.textContent = text;
+  // badge 动画：生成中时显示 spinner
+  node.badge.classList.toggle('generating', text.includes('生成中'));
   refreshClusterOutline(requestId);
 }
 
@@ -382,9 +393,9 @@ export function createModelNode({ nodeId, requestId, model, x, y }) {
   root.querySelector('.branch-send').addEventListener('click', () => {
     sendBranch(node);
   });
-  root.querySelector('.preview-btn-trigger').addEventListener('click', () => {
+  root.querySelector('.preview-btn-trigger').addEventListener('click', (e) => {
     const turn = node.turns.get(node.activeRound);
-    if (!turn || !turn.raw) return;
+    if (!turn || !turn.raw.trim()) { flashButtonLabel(e.currentTarget, '无内容'); return; }
     showPreview({
       title: getDisplayName(model),
       markdown: turn.raw,

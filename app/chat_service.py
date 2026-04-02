@@ -156,7 +156,9 @@ class MultiModelChatService:
         )
 
         last_error: Exception | None = None
+        partial_chunks: list[str] = []
         for attempt in range(1 + MAX_AUTO_RETRIES):
+            partial_chunks.clear()
             try:
                 full_text, usage = await asyncio.wait_for(
                     self._collect_model_stream(
@@ -166,6 +168,7 @@ class MultiModelChatService:
                         request_id=request_id,
                         round_number=round_number,
                         total_rounds=total_rounds,
+                        partial_chunks=partial_chunks,
                     ),
                     timeout=MODEL_STREAM_TIMEOUT_SECONDS,
                 )
@@ -295,11 +298,14 @@ class MultiModelChatService:
             }
         )
         if self.database is not None:
+            # 保存已接收的部分内容（超时/失败时可能已流式到前端一部分）
+            partial_text = "".join(partial_chunks) if partial_chunks else ""
             await self.database.record_model_result(
                 request_id=request_id,
                 model=model,
                 round_number=round_number,
                 status="error",
+                content=partial_text or None,
                 error_text=error_text,
                 duration_ms=duration_ms,
             )
@@ -324,8 +330,9 @@ class MultiModelChatService:
         request_id: str,
         round_number: int,
         total_rounds: int,
+        partial_chunks: list[str] | None = None,
     ) -> tuple[str, dict[str, int] | None]:
-        chunks: list[str] = []
+        chunks: list[str] = [] if partial_chunks is None else partial_chunks
         trimmed_history = self._trim_history(history)
         api_model_id = self.model_id_map.get(model, model)
 

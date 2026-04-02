@@ -390,10 +390,22 @@ export function replayCluster(req) {
   for (const [model, rounds] of Object.entries(modelResultsMap)) {
     const sorted = rounds.slice().sort((a, b) => a.round - b.round);
     for (const rd of sorted) {
-      ensureModelTurn(request_id, model, rd.round);
+      const replayTurn = ensureModelTurn(request_id, model, rd.round);
       if (rd.content) {
         appendTurnText(request_id, model, rd.round, rd.content);
         flushTurnRender(request_id, model, rd.round);
+      } else if (rd.error_text) {
+        // 失败轮次：显示错误信息而非空白
+        appendTurnText(request_id, model, rd.round, `> ⚠ 该轮请求未成功\n>\n> ${rd.error_text}\n\n_可点击「重试当前」重新请求。_`);
+        flushTurnRender(request_id, model, rd.round);
+      } else if (replayTurn) {
+        // 无内容也无错误：显示空白占位
+        replayTurn.mdEl.innerHTML = '<div class="empty-response-hint">'
+          + '<span class="empty-response-icon">⚠</span>'
+          + '<p>该轮未获取到模型回复</p>'
+          + '<p class="empty-response-sub">可尝试「重试当前」重新请求。</p>'
+          + '</div>';
+        if (replayTurn.skeletonEl) { replayTurn.skeletonEl.remove(); replayTurn.skeletonEl = null; }
       }
       setTurnState(request_id, model, rd.round, rd.status === 'success' ? '已完成' : '失败');
       setNodeState(request_id, model, `第 ${rd.round} 轮完成`);

@@ -201,14 +201,24 @@ function handleEvent(payload) {
       activateTurn(payload.request_id, payload.model, payload.round);
       appendTurnText(payload.request_id, payload.model, payload.round, payload.content);
       break;
-    case 'done':
+    case 'done': {
       materializeClusterModels(payload.request_id);
-      ensureModelTurn(payload.request_id, payload.model, payload.round);
+      const doneTurn = ensureModelTurn(payload.request_id, payload.model, payload.round);
       activateTurn(payload.request_id, payload.model, payload.round);
       flushTurnRender(payload.request_id, payload.model, payload.round);
+      // 空白检测：流式结束但无实际内容
+      if (doneTurn && !doneTurn.raw.trim()) {
+        doneTurn.mdEl.innerHTML = '<div class="empty-response-hint">'
+          + '<span class="empty-response-icon">⚠</span>'
+          + '<p>该轮模型未返回有效内容</p>'
+          + '<p class="empty-response-sub">可能原因：内容策略限制、上下文超限或 API 异常。可尝试"重试当前"。</p>'
+          + '</div>';
+        if (doneTurn.skeletonEl) { doneTurn.skeletonEl.remove(); doneTurn.skeletonEl = null; }
+      }
       setNodeState(payload.request_id, payload.model, `第 ${payload.round} 轮完成`);
       setTurnState(payload.request_id, payload.model, payload.round, '已完成');
       break;
+    }
     case 'error':
       if (payload.model) {
         materializeClusterModels(payload.request_id);
