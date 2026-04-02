@@ -1493,26 +1493,526 @@ a.auth-link {
 .auth-body {
   min-height: 100vh;
   margin: 0;
-  background:
-    radial-gradient(circle at top left, rgba(123, 38, 232, 0.12), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 28%),
-    linear-gradient(180deg, #f5f7fb 0%, #eef2f7 100%);
+  background: linear-gradient(180deg, #f5f7fb 0%, #eef2f7 100%);
 }
 
 .auth-shell {
   min-height: 100vh;
   display: grid;
-  place-items: center;
+  grid-template-columns: 2fr 1fr;
+  padding: 0;
+}
+
+/* ─── 左侧展示区 ─── */
+.login-area {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(rgba(123, 38, 232, 0.07) 1.2px, transparent 1.2px),
+    linear-gradient(180deg, #f5f3ff 0%, #ede9fe 50%, #f0ebff 100%);
+  background-size: 32px 32px, 100% 100%;
+  background-position: center, center;
+}
+
+.login-area-content {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  padding: 40px 24px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* Logo + Brand */
+.login-area-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.login-logo {
+  height: 52px;
+  width: 52px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 12px rgba(123, 38, 232, 0.15));
+}
+
+.login-brand-title {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 800;
+  background: linear-gradient(135deg, #7B26E8, #A96BF0);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.02em;
+}
+
+/* Footer: tagline + pills */
+.login-area-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.login-tagline {
+  margin: 0;
+  font-size: 14px;
+  color: #6b7280;
+  letter-spacing: 0.02em;
+}
+
+.feature-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.feature-pills .pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(123, 38, 232, 0.08);
+  color: #6B1FCC;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid rgba(123, 38, 232, 0.12);
+}
+
+/* ─── 光晕 ─── */
+.glow-orb {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(60px);
+}
+
+.orb-1 {
+  width: 300px; height: 300px;
+  top: -60px; left: -60px;
+  background: radial-gradient(circle, rgba(123, 38, 232, 0.18), transparent 70%);
+  animation: orb-drift-1 24s ease-in-out infinite alternate;
+}
+
+.orb-2 {
+  width: 250px; height: 250px;
+  bottom: -40px; right: -40px;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.15), transparent 70%);
+  animation: orb-drift-2 28s ease-in-out infinite alternate;
+}
+
+.orb-3 {
+  width: 200px; height: 200px;
+  bottom: 20%; left: 40%;
+  background: radial-gradient(circle, rgba(255, 217, 61, 0.12), transparent 70%);
+  animation: orb-drift-3 22s ease-in-out infinite alternate;
+}
+
+@keyframes orb-drift-1 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(40px, 30px) scale(1.15); }
+}
+
+@keyframes orb-drift-2 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(-30px, -25px) scale(1.1); }
+}
+
+@keyframes orb-drift-3 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(20px, -15px) scale(1.08); }
+}
+
+/* ─── 浮动装饰 ─── */
+.float-deco {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* 对话气泡 */
+.deco-chat {
+  width: 52px; height: 32px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 2px solid rgba(123, 38, 232, 0.25);
+  border-radius: 6px 6px 6px 2px;
+  animation: float-y 5s ease-in-out infinite alternate;
+  box-shadow: 0 4px 12px rgba(123, 38, 232, 0.06);
+}
+
+.deco-chat::before {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 22px; height: 4px;
+  border-radius: 2px;
+  background: rgba(123, 38, 232, 0.12);
+  box-shadow:
+    0 8px 0 rgba(123, 38, 232, 0.08);
+}
+
+/* 打字点动画 */
+.deco-chat::after {
+  content: '';
+  position: absolute;
+  bottom: 6px; right: 8px;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: rgba(123, 38, 232, 0.3);
+  box-shadow:
+    -7px 0 0 rgba(123, 38, 232, 0.3),
+    -14px 0 0 rgba(123, 38, 232, 0.3);
+  animation: typing-dot 1.4s ease-in-out infinite;
+}
+
+.deco-chat-sm {
+  width: 40px; height: 24px;
+  animation-duration: 6.5s;
+  border-radius: 6px 6px 2px 6px;
+}
+
+.deco-chat-sm::before { width: 16px; }
+
+/* 迷你节点卡片 */
+.deco-node {
+  width: 56px; height: 38px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1.5px solid rgba(123, 38, 232, 0.15);
+  border-radius: 8px;
+  animation: float-y 7s ease-in-out infinite alternate;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+}
+
+.deco-node::before {
+  content: '';
+  position: absolute;
+  top: 8px; left: 8px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #7B26E8;
+  box-shadow: 9px 0 0 rgba(107, 31, 204, 0.15);
+}
+
+.deco-node::after {
+  content: '';
+  position: absolute;
+  bottom: 8px; left: 8px; right: 8px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(123, 38, 232, 0.08);
+  box-shadow: 0 -7px 0 rgba(123, 38, 232, 0.06);
+}
+
+.deco-node-sm {
+  width: 44px; height: 30px;
+  animation-duration: 5.5s;
+}
+
+/* 像素星星 */
+.deco-star {
+  width: 12px; height: 12px;
+  animation: twinkle 3s ease-in-out infinite;
+}
+
+.deco-star::before,
+.deco-star::after {
+  content: '';
+  position: absolute;
+  background: rgba(123, 38, 232, 0.45);
+}
+
+.deco-star::before {
+  top: 4px; left: 0;
+  width: 12px; height: 4px;
+  border-radius: 1px;
+}
+
+.deco-star::after {
+  top: 0; left: 4px;
+  width: 4px; height: 12px;
+  border-radius: 1px;
+}
+
+.deco-star-yellow::before,
+.deco-star-yellow::after {
+  background: rgba(255, 217, 61, 0.6);
+}
+
+.deco-star-blue::before,
+.deco-star-blue::after {
+  background: rgba(99, 102, 241, 0.4);
+}
+
+/* 像素菱形 */
+.deco-diamond {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(123, 38, 232, 0.25);
+  transform: rotate(45deg);
+  animation: float-y 6s ease-in-out infinite alternate, twinkle 4s ease-in-out infinite;
+}
+
+.deco-diamond-blue {
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+/* 圆点 */
+.deco-circle {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: rgba(123, 38, 232, 0.2);
+  animation: float-y 4.5s ease-in-out infinite alternate;
+}
+
+.deco-circle-yellow {
+  background: rgba(255, 217, 61, 0.35);
+  width: 8px; height: 8px;
+}
+
+.deco-circle-blue {
+  background: rgba(99, 102, 241, 0.2);
+  width: 12px; height: 12px;
+}
+
+/* SVG 连接线 */
+.deco-connections {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.deco-connections path {
+  animation: dash-flow 4s linear infinite;
+}
+
+/* ─── 装饰动画 ─── */
+@keyframes float-y {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-14px); }
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}
+
+@keyframes dash-flow {
+  to { stroke-dashoffset: -24; }
+}
+
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.2; }
+  30% { opacity: 0.8; }
+}
+
+/* ─── 香蕉场景 ─── */
+.banana-scene {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0;
+  position: relative;
+  padding: 0 20px;
+  max-width: 400px;
+  width: 100%;
+}
+
+/* ─── SVG 像素香蕉（内联 SVG 版本） ─── */
+
+.banana-wrap {
+  position: relative;
+  display: inline-block;
+  width: 100px;
+  cursor: pointer;
+  transition: transform 0.3s ease;
+}
+
+.banana-wrap-center {
+  width: 115px;
+  margin: 0 -2px;
+  z-index: 2;
+}
+
+.banana-wrap svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 浮动 idle 动画 */
+#wrap-pirate {
+  animation: banana-idle 3s ease-in-out infinite alternate;
+}
+
+#wrap-ninja {
+  animation: banana-idle 3.5s ease-in-out infinite alternate;
+  animation-delay: -0.5s;
+}
+
+#wrap-hero {
+  animation: banana-idle 3.2s ease-in-out infinite alternate;
+  animation-delay: -1s;
+}
+
+@keyframes banana-idle {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-6px); }
+}
+
+/* ── Hover 个性反应 ── */
+#wrap-pirate:hover {
+  transform: rotate(-2deg) translateY(-4px);
+}
+
+#wrap-ninja:hover {
+  animation: ninja-dodge 0.4s ease forwards;
+}
+
+#wrap-hero:hover {
+  transform: scale(1.06) translateY(-3px);
+}
+
+@keyframes ninja-dodge {
+  0%   { transform: translateX(0) translateY(-3px); }
+  30%  { transform: translateX(-5px) translateY(-3px); }
+  60%  { transform: translateX(3px) translateY(-3px); }
+  100% { transform: translateX(0) translateY(-3px); }
+}
+
+/* ── 点击跳跃 ── */
+.banana-wrap.click-jump {
+  animation: click-jump-anim 0.4s ease-out !important;
+}
+
+@keyframes click-jump-anim {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-18px) scale(1.08); }
+}
+
+/* ── 点击气泡 ── */
+.click-bubble {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  font-size: 18px;
+  z-index: 10;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.click-bubble.pop {
+  animation: bubble-pop 0.8s ease-out forwards;
+}
+
+@keyframes bubble-pop {
+  0%   { opacity: 1; transform: translateX(-50%) translateY(0) scale(0.5); }
+  50%  { opacity: 1; transform: translateX(-50%) translateY(-22px) scale(1.3); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-36px) scale(1); }
+}
+
+/* 像素地面 */
+.banana-ground {
+  position: absolute;
+  bottom: -4px;
+  width: 320px;
+  height: auto;
+}
+
+/* ─── 香蕉交互状态 ─── */
+
+/* 用户名聚焦 — 微微倾斜 */
+.banana-scene.state-username .banana-wrap {
+  animation-play-state: paused;
+  transform: rotate(2deg) translateX(2px);
+}
+
+/* 密码聚焦 — 暂停浮动 */
+.banana-scene.state-password .banana-wrap {
+  animation-play-state: paused;
+  transform: translateY(-2px);
+}
+
+/* 验证码 — 微微低头 */
+.banana-scene.state-captcha .banana-wrap {
+  animation-play-state: paused;
+  transform: rotate(-1deg) translateY(3px);
+}
+
+/* 成功跳跃 */
+@keyframes banana-jump {
+  0%, 100% { transform: translateY(0); }
+  35% { transform: translateY(-24px) scale(1.05); }
+}
+
+.banana-scene.state-success .banana-wrap {
+  animation: banana-jump 0.5s ease-out !important;
+}
+
+/* 失败震动 */
+@keyframes banana-shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-8px) rotate(-2deg); }
+  30% { transform: translateX(8px) rotate(2deg); }
+  50% { transform: translateX(-6px) rotate(-1deg); }
+  70% { transform: translateX(4px) rotate(1deg); }
+  85% { transform: translateX(-2px); }
+}
+
+.banana-scene.state-error {
+  animation: banana-shake 0.5s ease-out;
+}
+
+/* 撒花粒子 */
+@keyframes confetti-fall {
+  0% { transform: translateY(0) translateX(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(120px) translateX(var(--drift, 0px)) rotate(720deg); opacity: 0; }
+}
+
+.confetti-particle {
+  position: absolute;
+  width: 6px; height: 6px;
+  pointer-events: none;
+  z-index: 20;
+  animation: confetti-fall 1s ease-out forwards;
+}
+
+/* ─── 右侧表单区 ─── */
+.auth-form-side {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
+  min-width: 0;
+  background:
+    radial-gradient(circle at top right, rgba(123, 38, 232, 0.06), transparent 50%),
+    #ffffff;
 }
 
 .auth-card {
-  width: min(480px, 100%);
+  width: min(420px, 100%);
   padding: 30px;
   border-radius: 32px;
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(16px);
 }
 
@@ -1524,6 +2024,43 @@ a.auth-link {
   height: 48px;
   width: auto;
   margin-bottom: 6px;
+}
+
+/* ─── 响应式 ─── */
+@media (max-width: 960px) {
+  .auth-shell {
+    grid-template-columns: 1fr 1fr;
+  }
+  .banana-wrap { width: 80px; }
+  .banana-wrap-center { width: 100px; }
+  .banana-ground { width: 260px; }
+  .login-brand-title { font-size: 26px; }
+  .login-logo { height: 42px; }
+  .deco-node, .deco-chat:nth-child(n+3) { display: none; }
+}
+
+@media (max-width: 768px) {
+  .auth-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .login-area {
+    min-height: 200px;
+    max-height: 240px;
+  }
+  .login-area-content { padding: 20px 16px; gap: 12px; }
+  .login-area-header { flex-direction: row; gap: 10px; }
+  .login-brand-title { font-size: 22px; }
+  .login-logo { height: 36px; }
+  .banana-wrap { width: 60px; }
+  .banana-wrap-center { width: 70px; }
+  .banana-ground { width: 200px; }
+  .login-area-footer { display: none; }
+  .glow-orb { display: none; }
+  .float-deco { display: none; }
+  .deco-connections { display: none; }
+  .auth-form-side { padding: 16px; }
+  .auth-card { border-radius: 24px; }
 }
 
 .auth-brand h1 {

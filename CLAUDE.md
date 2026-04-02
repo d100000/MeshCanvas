@@ -72,31 +72,56 @@ uvicorn app.main:app --reload
 
 ### WebSocket 消息协议
 
-客户端发送 JSON，`type` 字段区分消息类型：
+客户端发送 JSON，`action` 字段区分消息类型：
 - `chat`：主对话（含 `models`、`message`、`search_enabled`、`think_enabled`、`discussion_rounds`）
 - `branch_chat`：分支对话（额外含 `parent_request_id`、`source_model`、`source_round`）
 - `retry_model`：重试单个模型（含 `request_id`、`model`）
-- `save_cluster_position`：保存节点坐标
+- `cancel_request`：取消当前请求
+- `clear`：清空画布
 
-服务端推送 JSON 事件流，`event` 字段：`stream_start`、`stream_delta`、`stream_end`、`stream_error`、`search_result`、`round_start`。
+服务端推送 JSON 事件流，`type` 字段：`meta`、`user`、`search_started`、`search_complete`、`search_error`、`preprocess_start`、`preprocess_result`、`search_organized`、`round_start`、`start`、`delta`、`done`、`error`、`round_complete`、`conclusion_start`、`conclusion_done`、`conclusion_error`、`usage`。
 
 ### 无测试 / 无 Lint 配置
 
 当前无测试文件，无 ruff/flake8/mypy 配置。需调试时直接运行服务并通过浏览器或 WebSocket 客户端验证。
 
-### 前端画布（`app/static/app.js`）
+### 前端画布（`app/static/js/`）
 
-纯原生 JS 无限画布，无任何框架。核心概念：
-- **节点（Nodes）**：用户消息节点（约 500px 宽）和模型回复节点（约 420px 宽）
-- **集群（Clusters）**：将同一请求的节点归组
-- 平移（空格键 + 拖拽）、缩放（滚轮）、节点拖动、框选、小地图导航
+纯原生 JS 无限画布，无任何框架，已模块化拆分：
+
+| 文件 | 职责 |
+|------|------|
+| `app.js` | 入口、事件绑定、消息发送 |
+| `canvas.js` | 平移、缩放、小地图、Cluster 边界计算 |
+| `websocket.js` | WebSocket 连接、事件分发 |
+| `state.js` | 全局状态、DOM 引用、Map/Set 数据结构 |
+| `nodes.js` | 节点渲染、模型轮次、结论节点 |
+| `edges.js` | 连线渲染 |
+| `clusters.js` | 请求集群管理 |
+| `selection.js` | 框选、圈选总结 |
+| `sidebar.js` | 侧边栏、画布列表 |
+| `utils.js` | 通用工具函数 |
+
+核心概念：
+- **节点（Nodes）**：用户消息节点（500px 宽）、模型回复节点（420px 宽）、结论节点（520px 宽）
+- **集群（Clusters）**：将同一请求的节点归组，共享 Y 坐标
+- 平移（空格键 + 拖拽）、缩放（Ctrl+滚轮）、节点拖动、框选、小地图导航
 - WebSocket 客户端管理流式状态，将 delta 文本追加到节点
 
 ### 后端模块
 
+路由已从 `main.py` 拆分到 `app/routers/` 目录：
+
 | 文件 | 职责 |
 |------|------|
-| `app/main.py` | FastAPI 应用、HTTP 路由（含管理后台 API）、WebSocket 分发 |
+| `app/main.py` | FastAPI 应用创建、中间件、setup guard、静态文件挂载 |
+| `app/routers/pages.py` | 页面路由（首页、登录、注册、设置、画布） |
+| `app/routers/auth.py` | 用户注册、登录、登出 |
+| `app/routers/chat_ws.py` | WebSocket `/ws/chat` 端点 |
+| `app/routers/admin.py` | 管理后台全部 API（`/api/admin/*`） |
+| `app/routers/canvas.py` | 画布管理 API（CRUD、节点坐标） |
+| `app/routers/user.py` | 用户设置、自定义 API Key、用量查询 |
+| `app/routers/models.py` | 模型列表查询 |
 | `app/llm_client.py` | 统一 LLM 客户端抽象（OpenAI/Anthropic 双格式），工厂函数 `create_llm_client()` |
 | `app/chat_service.py` | 并发模型调用、流式处理、讨论轮次、Token 用量记录 |
 | `app/database.py` | SQLite 封装（WAL 模式，schema 版本管理至 v7） |
@@ -104,6 +129,8 @@ uvicorn app.main:app --reload
 | `app/security.py` | 安全头中间件、按 IP/用户的速率限制 |
 | `app/config.py` | 加载 `models_setting.json` 和环境变量，支持 `is_configured()` / `save_settings()` |
 | `app/search_service.py` | Firecrawl API 集成 |
+| `app/captcha.py` | 算术验证码生成与验证（HMAC 签名） |
+| `app/deps.py` | 依赖注入、辅助函数、常量定义 |
 | `app/request_logger.py` | 每日 JSONL 日志，路径为 `logs/requests-YYYY-MM-DD.jsonl` |
 | `app/bootstrap_admin.py` | 确保默认管理员存在，种子化管理员设置 |
 
@@ -151,3 +178,52 @@ uvicorn app.main:app --reload
 - POST 请求和 WebSocket 升级均进行 Origin 校验
 - 管理后台 API Key 显示时自动脱敏（仅展示前 8 字符）
 - 角色保护：至少保留 1 个管理员，不可移除自身管理员权限
+
+## 静态资源结构
+
+```
+app/static/
+├── js/              # 用户端画布模块（见上方表格）
+├── admin/           # 管理后台前端
+│   ├── dashboard.html
+│   ├── admin.js
+│   ├── admin.css
+│   └── login.js
+├── landing.html     # 首页（沉浸式滚动体验）
+├── landing.css
+├── landing.js
+├── login.html       # 登录/注册页
+├── login.css
+├── login.js
+├── index.html       # 画布主应用
+├── app.css
+├── settings.html    # 账号设置页
+├── setup.html       # 首次安装配置页
+└── setup.js
+```
+
+## 重要实现细节
+
+### 模型超时与错误处理
+
+- 每个模型流有 **70 秒超时**（`chat_service.py` 中 `asyncio.wait_for`）
+- 单个模型超时或错误不影响其他模型
+- 错误会通过 `type: "error"` 事件推送到前端，节点显示错误状态
+
+### 讨论轮次机制
+
+- `discussion_rounds` 参数控制轮数（1-4）
+- 每轮开始时注入讨论提示词，包含前一轮所有模型的输出
+- 最后一轮结束后可选生成结论节点
+
+### 搜索预处理
+
+- 当 `search_enabled: "auto"` 时，调用 `preprocess_model` 判断是否需要搜索
+- 预处理模型返回 JSON 决定搜索策略
+- 搜索结果通过 `SearchBundle` 注入到对话上下文
+
+### 节点坐标系统
+
+- 用户消息节点 Y 坐标由前端计算，保存到 `cluster_positions` 表
+- 模型回复节点按轮次垂直排列，间距由 `MODEL_NODE_HEIGHT` 常量控制
+- 分支对话的起点坐标继承自父节点的 `source_model` 位置
