@@ -151,3 +151,12 @@ uvicorn app.main:app --reload
 - POST 请求和 WebSocket 升级均进行 Origin 校验
 - 管理后台 API Key 显示时自动脱敏（仅展示前 8 字符）
 - 角色保护：至少保留 1 个管理员，不可移除自身管理员权限
+
+### 前端资源版本管理（重要）
+
+每次修改前端文件（`.js`、`.css`、`.svg`、`.png`、`.ico` 等 `app/static/` 下的资源）时，**必须**同步更新 `app/deps.py` 中的 `ASSET_VERSION` 常量。
+
+- **位置**：`app/deps.py` → `ASSET_VERSION = "YYYYMMDD[a-z]"`
+- **格式**：日期 + 小写字母后缀，例如 `"20260401a"`；同一天多次修改递增字母：`"20260401b"`、`"20260401c"`
+- **机制**：`_inject_asset_version()` 会在 HTML 响应中自动给所有 `/static/` 资源引用追加 `?v=ASSET_VERSION` 查询参数，用于浏览器缓存失效
+- **时机**：在前端文件修改完成、准备提交之前更新；纯后端改动（Python 逻辑、数据库迁移等）无需更新

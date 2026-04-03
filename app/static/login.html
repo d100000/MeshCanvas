@@ -11,70 +11,234 @@
   </head>
   <body class="auth-body">
     <main class="auth-shell">
-      <section class="auth-card">
-        <div class="auth-brand">
-          <img src="/static/logo.svg" alt="NanoBob" class="auth-logo" />
-          <span class="auth-badge">Secure Access</span>
-          <h1>NanoBob</h1>
-          <p>登录或注册，进入下一代 AI 工作台。</p>
+      <!-- ─── 左侧展示区 ─── -->
+      <section class="login-area">
+        <!-- L1: 氛围光晕 -->
+        <div class="glow-orb orb-1"></div>
+        <div class="glow-orb orb-2"></div>
+        <div class="glow-orb orb-3"></div>
+
+        <!-- L2: 浮动装饰 -->
+        <div class="float-deco deco-chat" style="top:10%;left:7%"></div>
+        <div class="float-deco deco-chat deco-chat-sm" style="top:22%;right:10%"></div>
+        <div class="float-deco deco-node" style="bottom:16%;left:5%"></div>
+        <div class="float-deco deco-node deco-node-sm" style="top:12%;right:7%"></div>
+        <div class="float-deco deco-star" style="top:18%;left:28%;animation-delay:-1s"></div>
+        <div class="float-deco deco-star" style="top:58%;right:18%;animation-delay:-2.5s"></div>
+        <div class="float-deco deco-star deco-star-yellow" style="bottom:28%;left:20%;animation-delay:-0.5s"></div>
+        <div class="float-deco deco-star deco-star-blue" style="top:7%;right:32%;animation-delay:-3s"></div>
+        <div class="float-deco deco-diamond" style="top:42%;left:4%;animation-delay:-1.5s"></div>
+        <div class="float-deco deco-diamond deco-diamond-blue" style="bottom:10%;right:13%;animation-delay:-2s"></div>
+        <div class="float-deco deco-circle" style="top:33%;left:14%"></div>
+        <div class="float-deco deco-circle deco-circle-yellow" style="top:68%;right:25%"></div>
+        <div class="float-deco deco-circle deco-circle-blue" style="top:8%;left:48%"></div>
+
+        <!-- L3: SVG 连接线 -->
+        <svg class="deco-connections" viewBox="0 0 600 500" preserveAspectRatio="none">
+          <path d="M 60 80 C 150 120, 250 60, 340 100" stroke="rgba(123,38,232,0.10)" stroke-width="1.5" stroke-dasharray="5 5" fill="none"/>
+          <path d="M 420 90 C 380 200, 200 280, 80 360" stroke="rgba(123,38,232,0.07)" stroke-width="1.5" stroke-dasharray="7 4" fill="none"/>
+          <path d="M 500 350 C 400 300, 300 380, 180 320" stroke="rgba(169,107,240,0.08)" stroke-width="1" stroke-dasharray="4 6" fill="none"/>
+        </svg>
+
+        <!-- L4: 主内容 -->
+        <div class="login-area-content">
+          <div class="login-area-header">
+            <img src="/static/logo.svg" alt="NanoBob" class="login-logo" />
+            <h2 class="login-brand-title">NanoBob</h2>
+          </div>
+
+          <div class="banana-scene" id="bananaScene">
+            <!-- 海盗香蕉 -->
+            <div class="banana-wrap" id="wrap-pirate">
+              <svg id="pirate-banana" viewBox="0 0 200 250" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="bananaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" style="stop-color:#ffeb3b"/><stop offset="50%" style="stop-color:#ffc107"/><stop offset="100%" style="stop-color:#ff9800"/>
+                  </linearGradient>
+                  <linearGradient id="hatGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#1a1a2e"/><stop offset="100%" style="stop-color:#0f0f1a"/>
+                  </linearGradient>
+                </defs>
+                <g id="pirate-body">
+                  <rect x="70" y="80" width="60" height="20" fill="url(#bananaGrad)"/><rect x="60" y="90" width="80" height="20" fill="url(#bananaGrad)"/><rect x="55" y="100" width="90" height="25" fill="url(#bananaGrad)"/><rect x="60" y="120" width="85" height="25" fill="url(#bananaGrad)"/><rect x="70" y="140" width="75" height="25" fill="url(#bananaGrad)"/><rect x="85" y="160" width="60" height="25" fill="url(#bananaGrad)"/><rect x="100" y="180" width="45" height="20" fill="url(#bananaGrad)"/><rect x="115" y="195" width="30" height="15" fill="#5d4037"/><rect x="70" y="75" width="15" height="15" fill="#689f38"/>
+                  <rect x="55" y="100" width="10" height="25" fill="#f9a825"/><rect x="60" y="120" width="10" height="25" fill="#f9a825"/><rect x="70" y="140" width="8" height="25" fill="#f9a825"/>
+                  <rect x="75" y="200" width="12" height="25" fill="#ffcc80"/><rect x="73" y="222" width="16" height="8" fill="#ffcc80"/><rect x="110" y="200" width="12" height="25" fill="#ffcc80"/><rect x="108" y="222" width="16" height="8" fill="#ffcc80"/>
+                  <rect x="45" y="110" width="20" height="10" fill="#ffcc80"/><rect x="35" y="115" width="15" height="25" fill="#ffcc80"/><rect x="30" y="135" width="12" height="8" fill="#ffcc80"/>
+                  <path d="M 140 115 L 155 115 L 155 125 L 145 130 L 140 125 Z" fill="#9e9e9e"/><path d="M 155 115 Q 170 110 170 125 Q 170 140 155 135" fill="none" stroke="#bdbdbd" stroke-width="4"/><circle cx="150" cy="120" r="8" fill="#5d4037"/>
+                </g>
+                <g id="pirate-hat">
+                  <rect x="40" y="50" width="120" height="25" fill="url(#hatGrad)"/><rect x="50" y="35" width="100" height="25" fill="url(#hatGrad)"/><rect x="60" y="25" width="80" height="20" fill="url(#hatGrad)"/>
+                  <rect x="45" y="55" width="10" height="10" fill="#ffd700"/><rect x="145" y="55" width="10" height="10" fill="#ffd700"/><rect x="55" y="40" width="8" height="8" fill="#ffd700"/><rect x="137" y="40" width="8" height="8" fill="#ffd700"/><rect x="70" y="30" width="6" height="6" fill="#ffd700"/><rect x="124" y="30" width="6" height="6" fill="#ffd700"/>
+                  <rect x="90" y="35" width="20" height="8" fill="#fff"/><rect x="88" y="38" width="4" height="6" fill="#fff"/><rect x="108" y="38" width="4" height="6" fill="#fff"/><rect x="95" y="43" width="10" height="3" fill="#fff"/><rect x="96" y="40" width="3" height="3" fill="#1a1a2e"/><rect x="101" y="40" width="3" height="3" fill="#1a1a2e"/>
+                </g>
+                <g id="pirate-eyes">
+                  <rect x="75" y="95" width="18" height="12" fill="#1a1a2e"/><rect x="78" y="92" width="12" height="3" fill="#1a1a2e"/><rect x="78" y="107" width="12" height="3" fill="#1a1a2e"/>
+                  <g id="pirate-eye-right"><rect x="105" y="95" width="20" height="15" fill="#fff"/><rect x="112" y="98" width="6" height="8" fill="#1a1a2e" class="pupil"/><rect x="114" y="100" width="2" height="2" fill="#fff"/></g>
+                  <g id="pirate-eye-closed" style="display:none;"><rect x="105" y="100" width="20" height="3" fill="#1a1a2e"/></g>
+                  <g id="pirate-eye-surprised" style="display:none;"><rect x="100" y="90" width="30" height="25" fill="#fff"/><rect x="110" y="98" width="10" height="10" fill="#1a1a2e"/></g>
+                </g>
+                <g id="pirate-mouth"><rect x="95" y="125" width="20" height="3" fill="#1a1a2e"/></g>
+                <g id="pirate-hand-cover" style="display:none;"><rect x="65" y="85" width="65" height="40" fill="#ffcc80"/><rect x="70" y="90" width="10" height="30" fill="#ffb74d"/><rect x="85" y="88" width="10" height="32" fill="#ffb74d"/><rect x="100" y="88" width="10" height="32" fill="#ffb74d"/><rect x="115" y="90" width="10" height="30" fill="#ffb74d"/></g>
+                <g id="pirate-mouth-surprised" style="display:none;"><rect x="100" y="125" width="15" height="15" fill="#1a1a2e"/></g>
+              </svg>
+              <div class="click-bubble" id="bubble-pirate"></div>
+            </div>
+
+            <!-- 忍者香蕉 -->
+            <div class="banana-wrap banana-wrap-center" id="wrap-ninja">
+              <svg id="ninja-banana" viewBox="0 0 200 250" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="ninjaBananaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" style="stop-color:#ffeb3b"/><stop offset="50%" style="stop-color:#fdd835"/><stop offset="100%" style="stop-color:#fbc02d"/>
+                  </linearGradient>
+                  <linearGradient id="ninjaSuitGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#2c2c2c"/><stop offset="100%" style="stop-color:#1a1a1a"/>
+                  </linearGradient>
+                </defs>
+                <g id="ninja-body">
+                  <rect x="75" y="70" width="50" height="15" fill="url(#ninjaBananaGrad)"/><rect x="65" y="80" width="70" height="20" fill="url(#ninjaBananaGrad)"/><rect x="60" y="95" width="80" height="25" fill="url(#ninjaBananaGrad)"/><rect x="65" y="115" width="75" height="25" fill="url(#ninjaBananaGrad)"/><rect x="75" y="135" width="65" height="25" fill="url(#ninjaBananaGrad)"/><rect x="90" y="155" width="50" height="25" fill="url(#ninjaBananaGrad)"/><rect x="105" y="175" width="35" height="15" fill="#5d4037"/>
+                  <rect x="60" y="95" width="10" height="25" fill="#f9a825"/><rect x="65" y="115" width="10" height="25" fill="#f9a825"/>
+                </g>
+                <g id="ninja-suit"><rect x="65" y="75" width="70" height="45" fill="url(#ninjaSuitGrad)"/><rect x="60" y="80" width="10" height="35" fill="url(#ninjaSuitGrad)"/><rect x="130" y="80" width="10" height="35" fill="url(#ninjaSuitGrad)"/><rect x="75" y="88" width="50" height="20" fill="#ffcc80"/></g>
+                <g id="ninja-eyes">
+                  <g id="ninja-eye-left"><rect x="78" y="92" width="20" height="12" fill="#fff"/><rect x="82" y="95" width="6" height="6" fill="#1a1a1a" class="pupil-left"/><rect x="84" y="97" width="2" height="2" fill="#fff"/></g>
+                  <g id="ninja-eye-right"><rect x="102" y="92" width="20" height="12" fill="#fff"/><rect x="106" y="95" width="6" height="6" fill="#1a1a1a" class="pupil-right"/><rect x="108" y="97" width="2" height="2" fill="#fff"/></g>
+                  <g id="ninja-eyes-closed" style="display:none;"><rect x="78" y="97" width="20" height="2" fill="#1a1a1a"/><rect x="102" y="97" width="20" height="2" fill="#1a1a1a"/></g>
+                  <g id="ninja-eyes-surprised" style="display:none;"><rect x="75" y="88" width="25" height="20" fill="#fff"/><rect x="100" y="88" width="25" height="20" fill="#fff"/><rect x="82" y="93" width="10" height="10" fill="#1a1a1a"/><rect x="107" y="93" width="10" height="10" fill="#1a1a1a"/></g>
+                </g>
+                <g id="ninja-headband"><rect x="50" y="75" width="15" height="8" fill="#333"/><rect x="45" y="80" width="12" height="6" fill="#333"/><rect x="40" y="85" width="10" height="5" fill="#333"/><rect x="35" y="90" width="8" height="4" fill="#333"/></g>
+                <g id="ninja-torso"><rect x="60" y="140" width="80" height="50" fill="url(#ninjaSuitGrad)"/><rect x="90" y="145" width="20" height="40" fill="#ffeb3b"/><rect x="75" y="150" width="15" height="30" fill="#333"/><rect x="110" y="150" width="15" height="30" fill="#333"/></g>
+                <g id="ninja-legs"><rect x="75" y="185" width="20" height="35" fill="url(#ninjaSuitGrad)"/><rect x="105" y="185" width="20" height="35" fill="url(#ninjaSuitGrad)"/><rect x="73" y="218" width="24" height="10" fill="#1a1a1a"/><rect x="103" y="218" width="24" height="10" fill="#1a1a1a"/></g>
+                <g id="ninja-arms"><rect x="40" y="145" width="25" height="12" fill="url(#ninjaSuitGrad)"/><rect x="30" y="150" width="15" height="30" fill="url(#ninjaSuitGrad)"/><rect x="25" y="178" width="12" height="12" fill="#ffcc80"/><rect x="140" y="145" width="25" height="12" fill="url(#ninjaSuitGrad)"/><rect x="160" y="150" width="15" height="30" fill="url(#ninjaSuitGrad)"/><rect x="168" y="178" width="12" height="12" fill="#ffcc80"/></g>
+                <g id="ninja-sword"><rect x="155" y="160" width="35" height="6" fill="#555"/><rect x="185" y="158" width="15" height="10" fill="#777"/><rect x="198" y="155" width="4" height="16" fill="#8d6e63"/></g>
+                <g id="ninja-mouth"><rect x="95" y="125" width="15" height="2" fill="#1a1a1a"/></g>
+                <g id="ninja-hand-cover" style="display:none;"><rect x="60" y="75" width="80" height="50" fill="#2c2c2c"/><rect x="70" y="85" width="12" height="35" fill="#1a1a1a"/><rect x="88" y="82" width="12" height="38" fill="#1a1a1a"/><rect x="106" y="82" width="12" height="38" fill="#1a1a1a"/><rect x="124" y="85" width="12" height="35" fill="#1a1a1a"/></g>
+                <g id="ninja-mouth-surprised" style="display:none;"><rect x="95" y="122" width="15" height="12" fill="#1a1a1a"/></g>
+              </svg>
+              <div class="click-bubble" id="bubble-ninja"></div>
+            </div>
+
+            <!-- 超级英雄香蕉 -->
+            <div class="banana-wrap" id="wrap-hero">
+              <svg id="hero-banana" viewBox="0 0 200 250" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="heroBananaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" style="stop-color:#ffeb3b"/><stop offset="50%" style="stop-color:#ffeb3b"/><stop offset="100%" style="stop-color:#fdd835"/>
+                  </linearGradient>
+                  <linearGradient id="capeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" style="stop-color:#e53935"/><stop offset="50%" style="stop-color:#c62828"/><stop offset="100%" style="stop-color:#b71c1c"/>
+                  </linearGradient>
+                </defs>
+                <g id="hero-body">
+                  <rect x="80" y="70" width="40" height="15" fill="#689f38"/><rect x="75" y="75" width="50" height="15" fill="url(#heroBananaGrad)"/><rect x="70" y="85" width="60" height="20" fill="url(#heroBananaGrad)"/><rect x="65" y="100" width="70" height="25" fill="url(#heroBananaGrad)"/><rect x="65" y="120" width="70" height="25" fill="url(#heroBananaGrad)"/><rect x="70" y="140" width="60" height="25" fill="url(#heroBananaGrad)"/><rect x="80" y="160" width="45" height="25" fill="url(#heroBananaGrad)"/><rect x="95" y="180" width="30" height="15" fill="#5d4037"/>
+                </g>
+                <g id="hero-cape"><rect x="40" y="110" width="30" height="80" fill="url(#capeGrad)"/><rect x="135" y="110" width="30" height="80" fill="url(#capeGrad)"/><rect x="55" y="100" width="20" height="100" fill="#d32f2f"/><rect x="130" y="100" width="20" height="100" fill="#d32f2f"/><rect x="70" y="110" width="60" height="90" fill="url(#capeGrad)"/></g>
+                <g id="hero-mask"><rect x="65" y="90" width="70" height="20" fill="#1976d2"/><rect x="60" y="95" width="10" height="12" fill="#1976d2"/><rect x="130" y="95" width="10" height="12" fill="#1976d2"/><rect x="135" y="98" width="15" height="8" fill="#1565c0"/><rect x="148" y="96" width="8" height="4" fill="#1565c0"/><rect x="148" y="104" width="8" height="4" fill="#1565c0"/></g>
+                <g id="hero-eyes">
+                  <g id="hero-eye-left"><rect x="72" y="95" width="20" height="12" fill="#fff"/><rect x="76" y="98" width="6" height="6" fill="#1a1a1a" class="pupil-left"/><rect x="78" y="100" width="2" height="2" fill="#fff"/></g>
+                  <g id="hero-eye-right"><rect x="108" y="95" width="20" height="12" fill="#fff"/><rect x="112" y="98" width="6" height="6" fill="#1a1a1a" class="pupil-right"/><rect x="114" y="100" width="2" height="2" fill="#fff"/></g>
+                  <g id="hero-eyes-closed" style="display:none;"><rect x="72" y="100" width="20" height="3" fill="#0d47a1"/><rect x="108" y="100" width="20" height="3" fill="#0d47a1"/></g>
+                  <g id="hero-eyes-surprised" style="display:none;"><rect x="70" y="90" width="25" height="20" fill="#fff"/><rect x="105" y="90" width="25" height="20" fill="#fff"/><rect x="78" y="95" width="10" height="10" fill="#1a1a1a"/><rect x="113" y="95" width="10" height="10" fill="#1a1a1a"/></g>
+                </g>
+                <g id="hero-arms"><rect x="45" y="115" width="25" height="10" fill="#ffeb3b"/><rect x="35" y="120" width="15" height="30" fill="#ffeb3b"/><rect x="32" y="148" width="12" height="12" fill="#ffcc80"/><rect x="135" y="115" width="25" height="10" fill="#ffeb3b"/><rect x="155" y="120" width="15" height="30" fill="#ffeb3b"/><rect x="162" y="148" width="12" height="12" fill="#ffcc80"/></g>
+                <g id="hero-legs"><rect x="80" y="195" width="15" height="30" fill="#ffeb3b"/><rect x="78" y="223" width="19" height="8" fill="#ffeb3b"/><rect x="110" y="195" width="15" height="30" fill="#ffeb3b"/><rect x="108" y="223" width="19" height="8" fill="#ffeb3b"/></g>
+                <g id="hero-mouth"><rect x="90" y="130" width="25" height="3" fill="#1a1a1a"/><rect x="88" y="128" width="3" height="3" fill="#1a1a1a"/><rect x="114" y="128" width="3" height="3" fill="#1a1a1a"/></g>
+                <g id="hero-hand-cover" style="display:none;"><rect x="55" y="85" width="90" height="45" fill="#ffeb3b"/><rect x="65" y="90" width="15" height="35" fill="#fdd835"/><rect x="85" y="88" width="15" height="38" fill="#fdd835"/><rect x="105" y="88" width="15" height="38" fill="#fdd835"/><rect x="125" y="90" width="15" height="35" fill="#fdd835"/></g>
+                <g id="hero-mouth-surprised" style="display:none;"><rect x="95" y="128" width="20" height="15" fill="#1a1a1a"/></g>
+              </svg>
+              <div class="click-bubble" id="bubble-hero"></div>
+            </div>
+
+            <!-- 像素地面 -->
+            <svg class="banana-ground" viewBox="0 0 320 20" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+              <rect x="20" y="6" width="280" height="10" fill="#86EFAC" opacity="0.5"/>
+              <rect x="20" y="12" width="280" height="4" fill="#059669" opacity="0.25"/>
+              <rect x="40" y="2" width="4" height="6" fill="#34D399" opacity="0.6"/>
+              <rect x="90" y="0" width="4" height="8" fill="#059669" opacity="0.5"/>
+              <rect x="150" y="3" width="4" height="5" fill="#34D399" opacity="0.5"/>
+              <rect x="210" y="1" width="4" height="7" fill="#059669" opacity="0.5"/>
+              <rect x="270" y="2" width="4" height="6" fill="#34D399" opacity="0.6"/>
+              <circle cx="65" cy="4" r="3" fill="#FFD93D" opacity="0.6"/>
+              <circle cx="180" cy="3" r="2.5" fill="#A96BF0" opacity="0.5"/>
+              <circle cx="245" cy="4" r="3" fill="#FFD93D" opacity="0.6"/>
+            </svg>
+          </div>
+
+          <div class="login-area-footer">
+            <p class="login-tagline">下一代 AI 工作台 · 多模型并发 · 无限画布</p>
+            <div class="feature-pills">
+              <span class="pill">多模型并发</span>
+              <span class="pill">无限画布</span>
+              <span class="pill">智能对话</span>
+            </div>
+          </div>
         </div>
+      </section>
 
-        <div class="auth-tabs" role="tablist" aria-label="登录或注册">
-          <button type="button" class="auth-tab active" data-auth-tab="login" aria-selected="true">登录</button>
-          <button type="button" class="auth-tab" data-auth-tab="register" aria-selected="false">注册</button>
-        </div>
+      <!-- ─── 右侧表单 ─── -->
+      <section class="auth-form-side">
+        <section class="auth-card">
+          <div class="auth-brand">
+            <span class="auth-badge">Secure Access</span>
+            <h1>欢迎回来</h1>
+            <p>登录或注册，进入下一代 AI 工作台。</p>
+          </div>
 
-        <section class="auth-panel-shell">
-          <form id="loginForm" class="auth-form" data-auth-panel="login">
-            <label class="auth-field">
-              <span>用户名</span>
-              <input name="username" type="text" autocomplete="username" maxlength="32" required />
-            </label>
-            <label class="auth-field">
-              <span>密码</span>
-              <input name="password" type="password" autocomplete="current-password" maxlength="128" required />
-            </label>
-            <div class="auth-captcha">
+          <div class="auth-tabs" role="tablist" aria-label="登录或注册">
+            <button type="button" class="auth-tab active" data-auth-tab="login" aria-selected="true">登录</button>
+            <button type="button" class="auth-tab" data-auth-tab="register" aria-selected="false">注册</button>
+          </div>
+
+          <section class="auth-panel-shell">
+            <form id="loginForm" class="auth-form" data-auth-panel="login">
               <label class="auth-field">
-                <span class="captcha-label">验证码：<strong class="captcha-question" data-captcha-q></strong><button type="button" class="captcha-refresh" data-captcha-refresh title="换一道题">&#x21bb;</button></span>
-                <input name="captcha_answer" type="text" inputmode="numeric" maxlength="6" autocomplete="off" required placeholder="请输入计算结果" />
+                <span>用户名</span>
+                <input name="username" type="text" autocomplete="username" maxlength="32" required />
               </label>
-              <input type="hidden" name="captcha_token" data-captcha-token />
-            </div>
-            <!-- honeypot: invisible to humans, bots auto-fill -->
-            <div class="auth-hp" aria-hidden="true">
-              <input name="website" tabindex="-1" autocomplete="off" />
-            </div>
-            <button type="submit" class="primary-btn auth-submit">登录</button>
-          </form>
-
-          <form id="registerForm" class="auth-form hidden" data-auth-panel="register">
-            <label class="auth-field">
-              <span>用户名</span>
-              <input name="username" type="text" autocomplete="username" maxlength="32" required />
-            </label>
-            <label class="auth-field">
-              <span>密码</span>
-              <input name="password" type="password" autocomplete="new-password" maxlength="128" required />
-            </label>
-            <div class="auth-captcha">
               <label class="auth-field">
-                <span class="captcha-label">验证码：<strong class="captcha-question" data-captcha-q></strong><button type="button" class="captcha-refresh" data-captcha-refresh title="换一道题">&#x21bb;</button></span>
-                <input name="captcha_answer" type="text" inputmode="numeric" maxlength="6" autocomplete="off" required placeholder="请输入计算结果" />
+                <span>密码</span>
+                <input name="password" type="password" autocomplete="current-password" maxlength="128" required />
               </label>
-              <input type="hidden" name="captcha_token" data-captcha-token />
-            </div>
-            <!-- honeypot -->
-            <div class="auth-hp" aria-hidden="true">
-              <input name="website" tabindex="-1" autocomplete="off" />
-            </div>
-            <button type="submit" class="primary-btn auth-submit">注册并进入</button>
-          </form>
+              <div class="auth-captcha">
+                <label class="auth-field">
+                  <span class="captcha-label">验证码：<strong class="captcha-question" data-captcha-q></strong><button type="button" class="captcha-refresh" data-captcha-refresh title="换一道题">&#x21bb;</button></span>
+                  <input name="captcha_answer" type="text" inputmode="numeric" maxlength="6" autocomplete="off" required placeholder="请输入计算结果" />
+                </label>
+                <input type="hidden" name="captcha_token" data-captcha-token />
+              </div>
+              <div class="auth-hp" aria-hidden="true">
+                <input name="website" tabindex="-1" autocomplete="off" />
+              </div>
+              <button type="submit" class="primary-btn auth-submit">登录</button>
+            </form>
+
+            <form id="registerForm" class="auth-form hidden" data-auth-panel="register">
+              <label class="auth-field">
+                <span>用户名</span>
+                <input name="username" type="text" autocomplete="username" maxlength="32" required />
+              </label>
+              <label class="auth-field">
+                <span>密码</span>
+                <input name="password" type="password" autocomplete="new-password" maxlength="128" required />
+              </label>
+              <div class="auth-captcha">
+                <label class="auth-field">
+                  <span class="captcha-label">验证码：<strong class="captcha-question" data-captcha-q></strong><button type="button" class="captcha-refresh" data-captcha-refresh title="换一道题">&#x21bb;</button></span>
+                  <input name="captcha_answer" type="text" inputmode="numeric" maxlength="6" autocomplete="off" required placeholder="请输入计算结果" />
+                </label>
+                <input type="hidden" name="captcha_token" data-captcha-token />
+              </div>
+              <div class="auth-hp" aria-hidden="true">
+                <input name="website" tabindex="-1" autocomplete="off" />
+              </div>
+              <button type="submit" class="primary-btn auth-submit">注册并进入</button>
+            </form>
+          </section>
+
+          <div id="authMessage" class="auth-message" aria-live="polite"></div>
+          <p class="auth-note">用户名支持字母、数字、点、下划线和短横线；密码至少 8 位。</p>
+          <p class="auth-note"><a href="/" class="auth-link">← 返回首页</a></p>
         </section>
-
-        <div id="authMessage" class="auth-message" aria-live="polite"></div>
-        <p class="auth-note">用户名支持字母、数字、点、下划线和短横线；密码至少 8 位。</p>
-        <p class="auth-note"><a href="/" class="auth-link">← 返回首页</a></p>
       </section>
     </main>
     <script src="/static/auth.js"></script>
