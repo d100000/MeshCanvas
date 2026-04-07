@@ -13,62 +13,28 @@ const DEFAULT_SCALE = 0.2;
 const MAX_MESSAGE_LENGTH = 4000;
 const CONCLUSION_CONTEXT_MAX_CHARS = 3000;
 
-let _rafEdgesScheduled = false;
-let _rafMinimapScheduled = false;
-let _rafTransformScheduled = false;
-let _rafSelectionActionsScheduled = false;
-let _rafClusterFramesScheduled = false;
-
-function scheduleRenderEdges() {
-  if (_rafEdgesScheduled) return;
-  _rafEdgesScheduled = true;
-  requestAnimationFrame(() => {
-    _rafEdgesScheduled = false;
-    renderEdges();
-  });
+/* rAF coalescing factory: returns a scheduler that fires `fn` at most once
+   per frame, no matter how many times the scheduler is called in between.
+   Used for renderEdges, renderMinimap, applyTransform, updateSelectionActions
+   and renderClusterFrames — all of which run in hot pointermove/wheel paths
+   and benefit from being deferred to the next animation frame. */
+function makeRafScheduler(fn) {
+  let scheduled = false;
+  return () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      fn();
+    });
+  };
 }
 
-function scheduleRenderMinimap() {
-  if (_rafMinimapScheduled) return;
-  _rafMinimapScheduled = true;
-  requestAnimationFrame(() => {
-    _rafMinimapScheduled = false;
-    renderMinimap();
-  });
-}
-
-/* Coalesces multiple wheel/pan/zoom events into a single rAF callback,
-   so the transform is committed at most once per frame. */
-function scheduleApplyTransform() {
-  if (_rafTransformScheduled) return;
-  _rafTransformScheduled = true;
-  requestAnimationFrame(() => {
-    _rafTransformScheduled = false;
-    applyTransform();
-  });
-}
-
-/* Defers the (expensive) selection toolbar reposition until the next frame.
-   updateSelectionActions reads getBoundingClientRect on every selected node
-   so we want to avoid running it synchronously inside pan/zoom handlers. */
-function scheduleSelectionActionsRefresh() {
-  if (_rafSelectionActionsScheduled) return;
-  _rafSelectionActionsScheduled = true;
-  requestAnimationFrame(() => {
-    _rafSelectionActionsScheduled = false;
-    updateSelectionActions();
-  });
-}
-
-/* B2: rAF-coalesced cluster frame redraw. */
-function scheduleRenderClusterFrames() {
-  if (_rafClusterFramesScheduled) return;
-  _rafClusterFramesScheduled = true;
-  requestAnimationFrame(() => {
-    _rafClusterFramesScheduled = false;
-    renderClusterFrames();
-  });
-}
+const scheduleRenderEdges = makeRafScheduler(() => renderEdges());
+const scheduleRenderMinimap = makeRafScheduler(() => renderMinimap());
+const scheduleApplyTransform = makeRafScheduler(() => applyTransform());
+const scheduleSelectionActionsRefresh = makeRafScheduler(() => updateSelectionActions());
+const scheduleRenderClusterFrames = makeRafScheduler(() => renderClusterFrames());
 
 function getDisplayName(model) {
   return MODEL_DISPLAY_NAMES[model] || model;
@@ -221,9 +187,55 @@ function pushHistory(entry) {
   historyStack.push(entry);
   if (historyStack.length > HISTORY_MAX) {
     historyStack.shift();
+  }
+  /* Always re-anchor index to the top after a push, so the next push doesn't
+     splice phantom future entries based on a stale index. */
+  historyIndex = historyStack.length - 1;
+  /* Any non-arrow push breaks the arrow-nudge coalescing window. */
+  _arrowNudgeEntry = null;
+  if (_arrowNudgeTimer) { clearTimeout(_arrowNudgeTimer); _arrowNudgeTimer = null; }
+}
+
+/* Arrow-key nudge history coalescing.
+   Holding ArrowRight at OS auto-repeat would otherwise create dozens of
+   1-pixel history entries. We collapse consecutive nudges on the same
+   selection into a single 'move' entry whose `toX/toY` is the latest
+   position; the `fromX/fromY` from the very first nudge is preserved so
+   one undo reverts the entire gesture. */
+let _arrowNudgeEntry = null;
+let _arrowNudgeTimer = null;
+const ARROW_NUDGE_COALESCE_MS = 500;
+
+function pushArrowNudgeHistory(finalPositions, _dx, _dy) {
+  /* Try to extend the existing nudge entry if it covers the SAME node set. */
+  const sameSet = _arrowNudgeEntry &&
+    _arrowNudgeEntry.ops.length === finalPositions.size &&
+    _arrowNudgeEntry.ops.every((op) => finalPositions.has(op.nodeId));
+  if (sameSet) {
+    for (const op of _arrowNudgeEntry.ops) {
+      const pos = finalPositions.get(op.nodeId);
+      op.toX = pos.x;
+      op.toY = pos.y;
+    }
   } else {
+    /* New nudge gesture — create a fresh history entry capturing both
+       the initial-from positions (current node minus the just-applied delta
+       reconstructs the prior position via the original snapshot we no longer
+       have, so we recompute fromX = currentX - dx; same for Y). */
+    const ops = [];
+    for (const [nodeId, pos] of finalPositions) {
+      ops.push({ nodeId, fromX: pos.x - _dx, fromY: pos.y - _dy, toX: pos.x, toY: pos.y });
+    }
+    _arrowNudgeEntry = { type: 'move', ops };
+    historyStack.push(_arrowNudgeEntry);
+    if (historyStack.length > HISTORY_MAX) historyStack.shift();
     historyIndex = historyStack.length - 1;
   }
+  if (_arrowNudgeTimer) clearTimeout(_arrowNudgeTimer);
+  _arrowNudgeTimer = setTimeout(() => {
+    _arrowNudgeEntry = null;
+    _arrowNudgeTimer = null;
+  }, ARROW_NUDGE_COALESCE_MS);
 }
 
 function applyMoveEntry(entry, direction) {
@@ -253,33 +265,38 @@ function applyMoveEntry(entry, direction) {
   scheduleSelectionActionsRefresh();
 }
 
+/* Symmetric counterpart to hideClusterVisual: re-attach a previously snapshotted
+   cluster (its nodes, edges, frame) back into the live scene. */
+function restoreClusterVisual(snapshot) {
+  const cluster = snapshot.frameSnapshot;
+  if (!cluster) return;
+  requestClusters.set(cluster.requestId, cluster);
+  for (const ns of snapshot.nodes) {
+    const node = ns.node;
+    node.x = ns.x;
+    node.y = ns.y;
+    stageEl.appendChild(node.root);
+    node.root.style.left = `${node.x}px`;
+    node.root.style.top = `${node.y}px`;
+    nodes.set(node.nodeId, node);
+    observeNodeResize(node.root, node.nodeId);
+  }
+  for (const e of snapshot.edges || []) {
+    edges.set(e.id, e);
+  }
+  updateClusterBounds(cluster.requestId);
+  scheduleRenderEdges();
+  scheduleRenderMinimap();
+  scheduleRenderClusterFrames();
+}
+
 function applyHideEntry(entry, direction) {
   if (direction === 'undo') {
-    /* Re-show the hidden cluster */
-    const cluster = entry.frameSnapshot;
-    if (!cluster) return;
-    requestClusters.set(cluster.requestId, cluster);
-    for (const ns of entry.nodes) {
-      const node = ns.node;
-      node.x = ns.x;
-      node.y = ns.y;
-      stageEl.appendChild(node.root);
-      node.root.style.left = `${node.x}px`;
-      node.root.style.top = `${node.y}px`;
-      nodes.set(node.nodeId, node);
-      observeNodeResize(node.root, node.nodeId);
-    }
-    /* Restore the edges */
-    for (const e of entry.edges || []) {
-      edges.set(e.id, e);
-    }
-    updateClusterBounds(cluster.requestId);
-    scheduleRenderEdges();
-    scheduleRenderMinimap();
-    scheduleRenderClusterFrames();
+    restoreClusterVisual(entry);
   } else {
-    /* Redo = hide again */
-    hideClusterVisual(entry.frameSnapshot.requestId, /*recordHistory*/ false);
+    /* Redo = hide again. Pass recordHistory=false so the redo doesn't push
+       a duplicate entry on top of itself. */
+    hideClusterVisual(entry.frameSnapshot.requestId, false);
   }
 }
 
@@ -296,10 +313,12 @@ function hideClusterVisual(requestId, recordHistory = true) {
     const node = nodes.get(id);
     if (!node) continue;
     snapshot.nodes.push({ node, x: node.x, y: node.y });
-    /* Detach DOM but keep the element in memory */
+    /* Detach DOM but keep the element in memory; stop the ResizeObserver
+       from pinning the (now offscreen) root so it can be GC'd if undo
+       eventually evicts the history entry that's holding it. */
+    if (_nodeResizeObserver) _nodeResizeObserver.unobserve(node.root);
     node.root.remove();
     nodes.delete(id);
-    nodeIdToClusterId.delete(id);
     selectedNodeIds.delete(id);
   }
   /* Snapshot + remove edges that touch this cluster */
@@ -358,28 +377,15 @@ const requestClusters = new Map();
 const nodes = new Map();
 const edges = new Map();
 const pendingSearchEvents = new Map();
-// Reverse index: nodeId → owning cluster's requestId (O(1) lookup)
-const nodeIdToClusterId = new Map();
 
 function getCluster(requestId) {
   return requestClusters.get(requestId) || null;
 }
 
-/* Find which cluster owns a given nodeId. O(1) on cache hit, O(N) miss + memo. */
+/* Every node already carries its owning cluster's requestId, set at creation
+   time in createUserNode/createModelNode/createConclusionNode. O(1) lookup. */
 function findClusterIdForNode(nodeId) {
-  const cached = nodeIdToClusterId.get(nodeId);
-  if (cached && requestClusters.has(cached)) return cached;
-  for (const cluster of requestClusters.values()) {
-    if (
-      cluster.userNodeId === nodeId ||
-      cluster.conclusionNodeId === nodeId ||
-      (cluster.modelNodeIds && cluster.modelNodeIds.includes(nodeId))
-    ) {
-      nodeIdToClusterId.set(nodeId, cluster.requestId);
-      return cluster.requestId;
-    }
-  }
-  return null;
+  return nodes.get(nodeId)?.requestId || null;
 }
 
 function setSaveStatus(text = '', type = '', autoHide = true) {
@@ -757,9 +763,11 @@ function updateComposerHint() {
   const isSingleModel = selection.length === 1 && selection[0].type === 'model';
   document.getElementById('roundHint').textContent = mode.hint;
   if (composerModeEl) {
-    /* Bug fix: when a single model is selected, render the mode pill as a
-       clickable toggle so the user can switch quote↔branch right from the
-       composer (in addition to the floating toolbar). */
+    /* Single model selected → render the pill as a clickable toggle so the
+       user can switch quote↔branch right from the composer (in addition to
+       the floating selection-actions toolbar). The click is handled via
+       delegation on composerModeEl (wired once at module init below) so we
+       don't accumulate listeners on every selection change. */
     if (isSingleModel) {
       const isQuote = state.modelSelectionMode === 'quote';
       composerModeEl.innerHTML = `
@@ -770,14 +778,6 @@ function updateComposerHint() {
       `;
       composerModeEl.dataset.mode = mode.key;
       composerModeEl.classList.add('clickable');
-      const toggleBtn = composerModeEl.querySelector('[data-toggle-mode]');
-      if (toggleBtn) {
-        toggleBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          setModelSelectionMode(state.modelSelectionMode === 'quote' ? 'branch' : 'quote');
-          updateComposerHint();
-        });
-      }
     } else {
       composerModeEl.textContent = mode.label;
       composerModeEl.dataset.mode = mode.key;
@@ -1109,6 +1109,9 @@ function replayCluster(req) {
     searchEnabled: false,
     isRunning: false,
     isCancelling: false,
+    /* Cached label so renderClusterFrames doesn't have to querySelector
+       on every redraw. Set once here from the user_message payload. */
+    labelText: typeof user_message === 'string' ? user_message.trim().slice(0, 30) : '',
   };
   requestClusters.set(request_id, cluster);
 
@@ -1631,6 +1634,8 @@ function createCluster({
     searchEnabled,
     isRunning: true,
     isCancelling: false,
+    /* Cached label for cluster frame rendering. */
+    labelText: typeof userMessage === 'string' ? userMessage.trim().slice(0, 30) : '',
   };
   requestClusters.set(requestId, cluster);
   if (!searchEnabled) {
@@ -2710,17 +2715,18 @@ function clearAlignGuides() {
   if (alignGuideLayerEl) alignGuideLayerEl.innerHTML = '';
 }
 
-/* Returns { snapDx, snapDy, lines } where lines is an array of
-   { x1, y1, x2, y2 } in world coordinates. */
-function computeAlignGuides(draggedBbox, draggedIds) {
-  const threshold = SNAP_THRESHOLD_PX / state.scale;
+/* Snapshot of all non-dragging nodes' bboxes, captured ONCE at drag start by
+   `cacheAlignSnapCandidates()`. Stable for the duration of the drag — only the
+   dragged group moves. Per-frame `computeAlignGuides()` reads from this list
+   instead of re-walking `nodes` and re-allocating per node. */
+let _alignCandidates = null;
 
-  /* Collect candidate (non-dragging) nodes' bboxes */
-  const candidates = [];
+function cacheAlignSnapCandidates(draggedIds) {
+  const list = [];
   for (const node of nodes.values()) {
     if (draggedIds.has(node.nodeId)) continue;
     const dim = getNodeDimensions(node);
-    candidates.push({
+    list.push({
       x1: node.x,
       y1: node.y,
       x2: node.x + dim.width,
@@ -2729,17 +2735,36 @@ function computeAlignGuides(draggedBbox, draggedIds) {
       cy: node.y + dim.height / 2,
     });
   }
-  if (!candidates.length) return { snapDx: 0, snapDy: 0, lines: [] };
+  _alignCandidates = list;
+}
 
-  /* Sort by distance to dragged center, take K nearest */
-  const dCx = (draggedBbox.x1 + draggedBbox.x2) / 2;
-  const dCy = (draggedBbox.y1 + draggedBbox.y2) / 2;
-  candidates.sort((a, b) => {
-    const da = (a.cx - dCx) ** 2 + (a.cy - dCy) ** 2;
-    const db = (b.cx - dCx) ** 2 + (b.cy - dCy) ** 2;
-    return da - db;
-  });
-  const neighbors = candidates.slice(0, SNAP_NEIGHBOR_LIMIT);
+function clearAlignSnapCandidates() {
+  _alignCandidates = null;
+}
+
+/* Returns { snapDx, snapDy, lines } where lines is an array of
+   { x1, y1, x2, y2 } in world coordinates. */
+function computeAlignGuides(draggedBbox, _draggedIds) {
+  const threshold = SNAP_THRESHOLD_PX / state.scale;
+  const candidates = _alignCandidates;
+  if (!candidates || !candidates.length) return { snapDx: 0, snapDy: 0, lines: [] };
+
+  /* For small N (≤ SNAP_NEIGHBOR_LIMIT), skip the sort entirely — every
+     candidate is in range. For larger N, sort by squared distance to the
+     dragged center and take the top K. */
+  let neighbors;
+  if (candidates.length <= SNAP_NEIGHBOR_LIMIT) {
+    neighbors = candidates;
+  } else {
+    const dCx = (draggedBbox.x1 + draggedBbox.x2) / 2;
+    const dCy = (draggedBbox.y1 + draggedBbox.y2) / 2;
+    /* Sort a fresh shallow copy so the cached list stays in original order. */
+    neighbors = candidates.slice().sort((a, b) => {
+      const da = (a.cx - dCx) ** 2 + (a.cy - dCy) ** 2;
+      const db = (b.cx - dCx) ** 2 + (b.cy - dCy) ** 2;
+      return da - db;
+    }).slice(0, SNAP_NEIGHBOR_LIMIT);
+  }
 
   /* For each axis, find the smallest delta that snaps the dragged group to a
      neighbor's left/center/right (X axis) or top/center/bottom (Y axis). */
@@ -2874,13 +2899,13 @@ function renderClusterFrames() {
     frame.style.width = `${width + FRAME_PADDING * 2}px`;
     frame.style.height = `${height + FRAME_PADDING * 2}px`;
 
-    /* Label = first ~30 chars of the user's question */
-    const userNode = nodes.get(cluster.userNodeId);
-    const userText = userNode?.root?.querySelector('.user-message')?.textContent?.trim() || '';
-    if (userText) {
+    /* Label = first ~30 chars of the user's question (cached on cluster
+       creation, no DOM querySelector in this hot path). */
+    const labelText = cluster.labelText;
+    if (labelText) {
       const label = document.createElement('div');
       label.className = 'cluster-frame-label';
-      label.textContent = userText.length > 30 ? userText.slice(0, 30) + '…' : userText;
+      label.textContent = labelText.length >= 30 ? labelText + '…' : labelText;
       frame.appendChild(label);
     }
 
@@ -3015,6 +3040,13 @@ function clearCanvas() {
   }
   positionSaveTimers.clear();
 
+  /* Detach all observed nodes from the ResizeObserver before wiping the
+     stage, otherwise the observer keeps strong refs to detached DOM. */
+  if (_nodeResizeObserver) {
+    for (const node of nodes.values()) {
+      _nodeResizeObserver.unobserve(node.root);
+    }
+  }
   stageEl.innerHTML = '';
   edgeLayerEl.innerHTML = '';
   if (clusterFrameLayerEl) clusterFrameLayerEl.innerHTML = '';
@@ -3022,7 +3054,6 @@ function clearCanvas() {
   nodes.clear();
   edges.clear();
   pendingSearchEvents.clear();
-  nodeIdToClusterId.clear();
   selectedNodeIds.clear();
   /* C1: history is invalid after a full canvas wipe */
   historyStack.length = 0;
@@ -3083,6 +3114,9 @@ function bindNodeDrag(root, nodeId, requestId) {
     state.draggingNodeId = nodeId;
     state.dragStartX = event.clientX;
     state.dragStartY = event.clientY;
+    /* B3: cache the non-dragging nodes' bboxes once at drag start so the
+       per-frame snap computation doesn't re-walk all nodes. */
+    cacheAlignSnapCandidates(new Set(state.dragOrigins.keys()));
     handle.setPointerCapture(event.pointerId);
   });
 
@@ -3182,8 +3216,9 @@ function bindNodeDrag(root, nodeId, requestId) {
     state.draggingNodeId = null;
     state.dragOrigins = null;
     state.dragClusterIds = null;
-    /* B3: clear alignment guides when drag ends */
+    /* B3: clear alignment guides AND release the cached candidate list. */
     clearAlignGuides();
+    clearAlignSnapCandidates();
     scheduleRenderEdges();
     scheduleRenderMinimap();
     scheduleSelectionActionsRefresh();
@@ -3769,9 +3804,33 @@ function focusCluster(requestId) {
 }
 
 /*
+ * Animate viewport scale + offset so an axis-aligned world-space bbox fits
+ * inside the viewport with the given padding. Shared by fitAll and
+ * focusSelection so they don't reimplement the same scale/offset math.
+ */
+function fitBboxToViewport(minX, minY, maxX, maxY, { padding = 80, duration = 260 } = {}) {
+  const worldWidth = (maxX - minX) + padding * 2;
+  const worldHeight = (maxY - minY) + padding * 2;
+  const rect = viewportEl.getBoundingClientRect();
+  const targetScale = clamp(
+    Math.min(rect.width / worldWidth, rect.height / worldHeight),
+    0.05,
+    1.8,
+  );
+  const centerWorldX = (minX + maxX) / 2;
+  const centerWorldY = (minY + maxY) / 2;
+  animateViewTo(
+    targetScale,
+    rect.width / 2 - centerWorldX * targetScale,
+    rect.height / 2 - centerWorldY * targetScale,
+    duration,
+  );
+}
+
+/*
  * Compute the union bbox of every existing cluster, then set scale + offset
  * so the entire union fits inside the viewport with some padding. Used by
- * Cmd/Ctrl+0 and (later) a "fit-all" toolbar button.
+ * Cmd/Ctrl+0 and the "fit-all" toolbar button (Shift+click).
  */
 function fitAll() {
   refreshAllClusterBounds();
@@ -3796,22 +3855,7 @@ function fitAll() {
     setZoom(DEFAULT_SCALE);
     return;
   }
-  const padding = 120;
-  const worldWidth = (maxX - minX) + padding * 2;
-  const worldHeight = (maxY - minY) + padding * 2;
-  const rect = viewportEl.getBoundingClientRect();
-  const scaleX = rect.width / worldWidth;
-  const scaleY = rect.height / worldHeight;
-  const targetScale = clamp(Math.min(scaleX, scaleY), 0.05, 1.8);
-  const centerWorldX = (minX + maxX) / 2;
-  const centerWorldY = (minY + maxY) / 2;
-  /* B1: animate to target view. */
-  animateViewTo(
-    targetScale,
-    rect.width / 2 - centerWorldX * targetScale,
-    rect.height / 2 - centerWorldY * targetScale,
-    320,
-  );
+  fitBboxToViewport(minX, minY, maxX, maxY, { padding: 120, duration: 320 });
 }
 
 /*
@@ -3837,8 +3881,8 @@ function focusNode(nodeId) {
 
 /*
  * Zoom and center to fit the current selection. If only one node is selected,
- * delegates to focusNode for a snappier feel. If multiple nodes selected,
- * computes their union bbox and fits it (similar to fitAll but scoped).
+ * delegates to focusNode for a snappier feel. Otherwise computes the union
+ * bbox of selected nodes and fits it via the shared helper.
  */
 function focusSelection() {
   if (!selectedNodeIds.size) return;
@@ -3860,21 +3904,7 @@ function focusSelection() {
     maxY = Math.max(maxY, node.y + dim.height);
   }
   if (!Number.isFinite(minX)) return;
-  const padding = 80;
-  const worldWidth = (maxX - minX) + padding * 2;
-  const worldHeight = (maxY - minY) + padding * 2;
-  const rect = viewportEl.getBoundingClientRect();
-  const scaleX = rect.width / worldWidth;
-  const scaleY = rect.height / worldHeight;
-  const targetScale = clamp(Math.min(scaleX, scaleY), 0.05, 1.8);
-  const centerWorldX = (minX + maxX) / 2;
-  const centerWorldY = (minY + maxY) / 2;
-  /* B1: animate to fit selection bounds. */
-  animateViewTo(
-    targetScale,
-    rect.width / 2 - centerWorldX * targetScale,
-    rect.height / 2 - centerWorldY * targetScale,
-  );
+  fitBboxToViewport(minX, minY, maxX, maxY);
 }
 
 function applyTransform() {
@@ -4083,6 +4113,7 @@ const segModeBranch = document.getElementById('selectionModeBranch');
 
 function setModelSelectionMode(mode) {
   if (mode !== 'branch' && mode !== 'quote') return;
+  if (mode === state.modelSelectionMode) return;
   state.modelSelectionMode = mode;
   try { localStorage.setItem('nb:modelSelMode', mode); } catch (_e) {}
   if (segModeQuote) {
@@ -4103,8 +4134,27 @@ function setModelSelectionMode(mode) {
 segModeQuote?.addEventListener('click', () => setModelSelectionMode('quote'));
 segModeBranch?.addEventListener('click', () => setModelSelectionMode('branch'));
 
-/* Initial visual state synced with whatever was restored from localStorage. */
-setModelSelectionMode(state.modelSelectionMode);
+/* Delegated handler for the composer-area mode-pill toggle. Wired ONCE at
+   module init so updateComposerHint can rebuild innerHTML safely without
+   re-attaching listeners every render. Mirrors the pattern used by
+   `_chipsDelegated` for selectedChipsEl. */
+composerModeEl?.addEventListener('click', (event) => {
+  if (!event.target.closest('[data-toggle-mode]')) return;
+  event.stopPropagation();
+  setModelSelectionMode(state.modelSelectionMode === 'quote' ? 'branch' : 'quote');
+  updateComposerHint();
+});
+
+/* Initial visual state synced with whatever was restored from localStorage.
+   We can't call setModelSelectionMode here since it now early-returns on
+   no-op, so just toggle the classes directly. */
+{
+  const initialMode = state.modelSelectionMode;
+  segModeQuote?.classList.toggle('active', initialMode === 'quote');
+  segModeQuote?.setAttribute('aria-selected', String(initialMode === 'quote'));
+  segModeBranch?.classList.toggle('active', initialMode === 'branch');
+  segModeBranch?.setAttribute('aria-selected', String(initialMode === 'branch'));
+}
 window.addEventListener('resize', updateSelectionActions);
 sendBtn.addEventListener('click', sendMessage);
 clearBtn.addEventListener('click', () => {
@@ -4279,7 +4329,10 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  /* Arrow keys — nudge selected nodes (1px or 10px with Shift) */
+  /* Arrow keys — nudge selected nodes (1px or 10px with Shift).
+     Consecutive nudges within 500ms on the same selection are coalesced into
+     a SINGLE history entry, so a held-down arrow key (OS auto-repeat fires
+     ~30 times/sec) doesn't blow through HISTORY_MAX in 3 seconds. */
   if (selectedNodeIds.size && (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
     const step = event.shiftKey ? 10 : 1;
     let dx = 0, dy = 0;
@@ -4288,22 +4341,21 @@ document.addEventListener('keydown', (event) => {
     if (event.key === 'ArrowUp') dy = -step;
     if (event.key === 'ArrowDown') dy = step;
     const affectedClusters = new Set();
-    /* C1: capture history for arrow nudges too */
-    const moveOps = [];
+    /* Move every selected node and collect the per-node final positions. */
+    const finalPositions = new Map();
     for (const id of selectedNodeIds) {
       const n = nodes.get(id);
       if (!n) continue;
-      const fromX = n.x;
-      const fromY = n.y;
       n.x += dx;
       n.y += dy;
       n.root.style.left = `${n.x}px`;
       n.root.style.top = `${n.y}px`;
-      moveOps.push({ nodeId: id, fromX, fromY, toX: n.x, toY: n.y });
+      finalPositions.set(id, { x: n.x, y: n.y });
       const rid = findClusterIdForNode(id);
       if (rid) affectedClusters.add(rid);
     }
-    if (moveOps.length) pushHistory({ type: 'move', ops: moveOps });
+    /* Coalesce with the previous arrow nudge if it's still "alive". */
+    pushArrowNudgeHistory(finalPositions, dx, dy);
     for (const rid of affectedClusters) {
       updateClusterBounds(rid);
       schedulePositionSave(rid);
