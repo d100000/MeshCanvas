@@ -393,19 +393,72 @@ button {
   border-radius: 24px;
   background: linear-gradient(180deg, #f7f7f8 0%, #f4f4f5 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  cursor: default;
+}
+
+.canvas-viewport.space-held {
   cursor: grab;
 }
 
-.canvas-viewport.panning {
+.canvas-viewport.panning,
+.canvas-viewport.space-held.panning {
   cursor: grabbing;
 }
 
 .canvas-grid,
 .canvas-stage,
-.edge-layer {
+.edge-layer,
+.cluster-frame-layer {
   position: absolute;
   inset: 0;
   transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* ── Cluster visual frames (B2) ── */
+.cluster-frame-layer {
+  pointer-events: none;
+  z-index: 1;
+}
+.cluster-frame {
+  position: absolute;
+  border: 1.5px dashed rgba(123, 38, 232, 0.22);
+  background: rgba(123, 38, 232, 0.025);
+  border-radius: 16px;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+.cluster-frame.active {
+  border-color: rgba(123, 38, 232, 0.5);
+  background: rgba(123, 38, 232, 0.06);
+  border-style: solid;
+}
+.cluster-frame-label {
+  position: absolute;
+  top: -22px;
+  left: 12px;
+  font-size: 11px;
+  color: rgba(123, 38, 232, 0.78);
+  background: rgba(255, 255, 255, 0.94);
+  padding: 2px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  border: 1px solid rgba(123, 38, 232, 0.2);
+  font-weight: 500;
+}
+
+/* ── Marquee box-select ── */
+.marquee {
+  position: absolute;
+  pointer-events: none;
+  border: 1.5px solid rgba(123, 38, 232, 0.6);
+  background: rgba(123, 38, 232, 0.08);
+  border-radius: 2px;
+  z-index: 6;
+  will-change: left, top, width, height;
 }
 
 .canvas-grid {
@@ -440,6 +493,75 @@ button {
 .selection-actions .small-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* ── F1: segmented control for model selection mode ── */
+.seg-control {
+  display: inline-flex;
+  align-items: stretch;
+  height: 30px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(123, 38, 232, 0.06);
+  border: 1px solid rgba(123, 38, 232, 0.18);
+}
+.seg-control.hidden {
+  display: none;
+}
+.seg-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: rgba(15, 23, 42, 0.6);
+  font-size: 12px;
+  padding: 0 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+  white-space: nowrap;
+}
+.seg-btn:hover {
+  color: rgba(15, 23, 42, 0.85);
+}
+.seg-btn.active {
+  background: #ffffff;
+  color: var(--accent-strong, #6b1fcc);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.1);
+  font-weight: 600;
+}
+
+/* Clickable mode pill in composer area (mirror of segmented control) */
+.mode-pill.clickable {
+  padding: 0 4px 0 10px;
+  gap: 6px;
+  display: inline-flex;
+  align-items: center;
+}
+.mode-pill .mode-pill-label {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mode-pill .mode-pill-toggle {
+  appearance: none;
+  border: 0;
+  background: rgba(107, 31, 204, 0.15);
+  color: var(--accent-strong, #6b1fcc);
+  font-size: 12px;
+  height: 20px;
+  width: 24px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+.mode-pill .mode-pill-toggle:hover {
+  background: rgba(107, 31, 204, 0.28);
+  transform: scale(1.08);
 }
 
 .edge-path {

@@ -63,7 +63,11 @@
           <svg id="edgeLayer" class="edge-layer" aria-hidden="true"></svg>
           <div id="canvasStage" class="canvas-stage"></div>
           <div id="selectionActions" class="selection-actions hidden">
-            <button id="selectionContinueBtn" type="button" class="small-btn">继续对话</button>
+            <div id="selectionModeSegment" class="seg-control hidden" role="tablist" aria-label="模型选择模式">
+              <button id="selectionModeQuote" type="button" class="seg-btn active" role="tab" aria-selected="true" title="把当前回答作为上下文，让所有模型继续讨论">📤 引用到所有模型</button>
+              <button id="selectionModeBranch" type="button" class="seg-btn" role="tab" aria-selected="false" title="只用当前模型继续延展，不打扰其他模型">⎇ 仅此模型</button>
+            </div>
+            <button id="selectionContinueBtn" type="button" class="small-btn">继续讨论</button>
             <button id="selectionBranchBtn" type="button" class="small-btn">建立分支</button>
             <button id="selectionClearBtn" type="button" class="small-btn">清除选择</button>
           </div>

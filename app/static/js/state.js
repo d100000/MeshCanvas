@@ -104,8 +104,28 @@ export const state = {
   dragStartY: 0,
   originNodeX: 0,
   originNodeY: 0,
+  // Multi-select drag: snapshot of starting positions for every node moving
+  // together. When set, pointermove updates the whole set instead of just
+  // state.draggingNodeId. dragClusterIds is the set of clusters whose bbox
+  // / persistence needs to be re-flushed at drag-end.
+  dragOrigins: null,         // Map<nodeId, {x, y}> | null
+  dragClusterIds: null,      // Set<requestId> | null
   selectionSource: 'none',
+  // F1: when a single model card is selected, controls whether the next
+  // sendMessage() goes as a single-model branch or as a multi-model chat
+  // with the selected model's response quoted as context.
+  // 'quote' (default) — fan out to all models with the model's reply as context
+  // 'branch'          — send only to that one model as a branch
+  modelSelectionMode: 'quote',
 };
+
+// Restore persisted F1 mode preference (no-op in private mode / SSR).
+try {
+  const saved = localStorage.getItem('nb:modelSelMode');
+  if (saved === 'branch' || saved === 'quote') {
+    state.modelSelectionMode = saved;
+  }
+} catch (_e) { /* ignore */ }
 
 // Selection summary sidebar state
 export const selectionSummaryState = {

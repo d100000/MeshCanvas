@@ -3,7 +3,7 @@
  */
 
 import {
-  state, appState, requestClusters, nodes,
+  state, appState, requestClusters, nodes, selectedNodeIds,
   viewportEl,
   MODEL_NODE_WIDTH, MODEL_NODE_HEIGHT,
   USER_NODE_WIDTH, USER_NODE_HEIGHT,
@@ -184,6 +184,9 @@ export function createCluster({
     searchEnabled,
     isRunning: true,
     isCancelling: false,
+    /* B2: cached label so renderClusterFrames doesn't have to querySelector
+       on every redraw. Set once here from the user_message payload. */
+    labelText: typeof userMessage === 'string' ? userMessage.trim().slice(0, 30) : '',
   };
   requestClusters.set(requestId, cluster);
   if (!searchEnabled) {
@@ -195,6 +198,32 @@ export function createCluster({
 }
 
 // ── Place cluster ────────────────────────────────────────────────────────────
+
+/**
+ * Compute the union bounding box of every cluster that has at least one
+ * currently-selected node. Used by placeCluster to anchor a new conversation
+ * next to the user's current selection instead of viewport center.
+ */
+function unionBboxOfSelectedClusters() {
+  if (!selectedNodeIds.size) return null;
+  const seen = new Set();
+  for (const nodeId of selectedNodeIds) {
+    const node = nodes.get(nodeId);
+    if (node?.requestId) seen.add(node.requestId);
+  }
+  if (!seen.size) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const rid of seen) {
+    const cluster = requestClusters.get(rid);
+    if (!cluster?.bbox) continue;
+    minX = Math.min(minX, cluster.bbox.x);
+    minY = Math.min(minY, cluster.bbox.y);
+    maxX = Math.max(maxX, cluster.bbox.x + cluster.bbox.width);
+    maxY = Math.max(maxY, cluster.bbox.y + cluster.bbox.height);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
 
 export function placeCluster({ modelCount, parentRequestId, sourceModel }) {
   const footprintWidth = Math.max(
@@ -221,22 +250,42 @@ export function placeCluster({ modelCount, parentRequestId, sourceModel }) {
     ];
     bbox = findAvailableBox(candidates, footprintWidth, footprintHeight);
   } else {
+    /* F1 enhancement: if the user has a selection, anchor placement to the
+       right of the selected cluster's union bbox so the new conversation
+       lands next to what they're working on (instead of viewport center). */
+    const selectedBbox = unionBboxOfSelectedClusters();
+    let anchorX, anchorY;
+    if (selectedBbox) {
+      anchorX = selectedBbox.x + selectedBbox.width + CLUSTER_PADDING + 60;
+      anchorY = selectedBbox.y;
+    } else {
+      anchorX = centerWorldX - footprintWidth / 2;
+      anchorY = centerWorldY - footprintHeight / 2;
+    }
+
     const colCount = 3;
     const colSpacing = footprintWidth + CLUSTER_PADDING * 2 + 60;
     const rowSpacing = footprintHeight + CLUSTER_PADDING * 2 + 60;
-    const baseX = centerWorldX - colCount * colSpacing / 2;
-    const baseY = centerWorldY - footprintHeight / 2;
+    const baseX = anchorX - colCount * colSpacing / 2;
+    const baseY = anchorY;
     const candidates = [];
+    /* Try the anchor point itself first, then the right side, then the grid */
+    candidates.push({ x: anchorX, y: anchorY });
+    if (selectedBbox) {
+      candidates.push({ x: anchorX, y: anchorY + footprintHeight + CLUSTER_PADDING * 2 });
+      candidates.push({ x: anchorX, y: anchorY + 2 * (footprintHeight + CLUSTER_PADDING * 2) });
+    }
     for (let i = 0; i < 42; i += 1) {
       candidates.push({
         x: baseX + (i % colCount) * colSpacing,
         y: baseY + Math.floor(i / colCount) * rowSpacing,
       });
     }
-    // 按距视口中心距离排序，优先使用离用户最近的位置
+    // Sort grid candidates by distance to anchor (preserves the priority
+    // of explicit anchor candidates added above).
     candidates.sort((a, b) => {
-      return ((a.x - centerWorldX) ** 2 + (a.y - centerWorldY) ** 2)
-        - ((b.x - centerWorldX) ** 2 + (b.y - centerWorldY) ** 2);
+      return ((a.x - anchorX) ** 2 + (a.y - anchorY) ** 2)
+        - ((b.x - anchorX) ** 2 + (b.y - anchorY) ** 2);
     });
     bbox = findAvailableBox(candidates, footprintWidth, footprintHeight);
     appState.clusterCount += 1;
@@ -361,6 +410,8 @@ export function replayCluster(req) {
     searchEnabled: false,
     isRunning: false,
     isCancelling: false,
+    /* B2: cached label for cluster frame rendering */
+    labelText: typeof user_message === 'string' ? user_message.trim().slice(0, 30) : '',
   };
   requestClusters.set(request_id, cluster);
 

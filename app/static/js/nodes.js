@@ -582,27 +582,48 @@ function bindNodeDrag(root, nodeId, requestId) {
     const node = nodes.get(nodeId);
     if (!node) return;
 
+    /* Decide drag-set: if the clicked node is part of a multi-selection,
+       drag the whole selection together; otherwise drag only this node. */
+    const dragIds = (selectedNodeIds.has(nodeId) && selectedNodeIds.size > 1)
+      ? Array.from(selectedNodeIds)
+      : [nodeId];
+
+    /* Snapshot starting positions of every node in the drag-set, plus the
+       set of clusters whose bounds will need to be re-flushed at drag-end. */
+    state.dragOrigins = new Map();
+    state.dragClusterIds = new Set();
+    for (const id of dragIds) {
+      const n = nodes.get(id);
+      if (!n) continue;
+      state.dragOrigins.set(id, { x: n.x, y: n.y });
+      n.root.classList.add('dragging');
+      if (n.requestId) state.dragClusterIds.add(n.requestId);
+    }
+
     state.draggingNodeId = nodeId;
     state.dragStartX = event.clientX;
     state.dragStartY = event.clientY;
-    state.originNodeX = node.x;
-    state.originNodeY = node.y;
-    root.classList.add('dragging');
     handle.setPointerCapture(event.pointerId);
   });
 
   handle.addEventListener('pointermove', (event) => {
     if (state.draggingNodeId !== nodeId) return;
-    const node = nodes.get(nodeId);
-    if (!node) return;
+    if (!state.dragOrigins) return;
 
     const dx = (event.clientX - state.dragStartX) / state.scale;
     const dy = (event.clientY - state.dragStartY) / state.scale;
-    node.x = state.originNodeX + dx;
-    node.y = state.originNodeY + dy;
-    node.root.style.left = `${node.x}px`;
-    node.root.style.top = `${node.y}px`;
-    updateClusterBounds(requestId);
+
+    /* Apply the same delta to every node in the drag-set */
+    for (const [id, origin] of state.dragOrigins) {
+      const n = nodes.get(id);
+      if (!n) continue;
+      n.x = origin.x + dx;
+      n.y = origin.y + dy;
+      n.root.style.left = `${n.x}px`;
+      n.root.style.top = `${n.y}px`;
+    }
+    /* Refresh bbox once per affected cluster (not per node) */
+    for (const rid of state.dragClusterIds) updateClusterBounds(rid);
     scheduleRenderEdges();
     scheduleRenderMinimap();
     updateSelectionActions();
@@ -611,12 +632,27 @@ function bindNodeDrag(root, nodeId, requestId) {
   function stopDrag(event) {
     if (state.draggingNodeId !== nodeId) return;
     handle.releasePointerCapture?.(event.pointerId);
+
+    /* Strip dragging class from every dragged node */
+    if (state.dragOrigins) {
+      for (const id of state.dragOrigins.keys()) {
+        nodes.get(id)?.root.classList.remove('dragging');
+      }
+    }
+    /* Persist position once per affected cluster (each has its own debounce). */
+    if (state.dragClusterIds) {
+      for (const rid of state.dragClusterIds) {
+        updateClusterBounds(rid);
+        schedulePositionSave(rid);
+      }
+    }
+
     state.draggingNodeId = null;
-    root.classList.remove('dragging');
-    updateClusterBounds(requestId);
+    state.dragOrigins = null;
+    state.dragClusterIds = null;
     scheduleRenderEdges();
     scheduleRenderMinimap();
-    schedulePositionSave(requestId);
+    updateSelectionActions();
   }
 
   handle.addEventListener('pointerup', stopDrag);

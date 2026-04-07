@@ -13,7 +13,7 @@ import {
 } from './state.js';
 import { escapeHtml, escapeAttribute, getDisplayName } from './utils.js';
 import { isNodeAdjacent, scheduleRenderEdges } from './edges.js';
-import { scheduleRenderMinimap } from './canvas.js';
+import { scheduleRenderMinimap, scheduleRenderClusterFrames } from './canvas.js';
 import { getLatestRound, openBranchComposer } from './nodes.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -53,7 +53,40 @@ export function refreshStatus() {
 
 export function shouldUseSelectionSummary(selection = getSelectedContextNodes()) {
   if (!selection.length) return false;
-  return !(selection.length === 1 && selection[0].type === 'model' && state.selectionSource === 'click');
+  /* F1: when a single model is click-selected, the user can choose between
+     branch mode (just that model) or quote mode (fan-out to all models with
+     the model's reply as quoted context). Only quote mode needs the summary
+     bundle to be built. */
+  if (selection.length === 1 && selection[0].type === 'model' && state.selectionSource === 'click') {
+    return state.modelSelectionMode === 'quote';
+  }
+  return true;
+}
+
+/*
+ * F1: switch between 'quote' (default) and 'branch' modes for single model
+ * card selection. Persists to localStorage so the choice survives reloads.
+ * Triggers a re-render of the selection summary so the composer hint /
+ * preview pipeline reacts immediately.
+ */
+export function setModelSelectionMode(mode) {
+  if (mode !== 'branch' && mode !== 'quote') return;
+  if (mode === state.modelSelectionMode) return;
+  state.modelSelectionMode = mode;
+  try { localStorage.setItem('nb:modelSelMode', mode); } catch (_e) {}
+  /* Sync the segmented control button states */
+  const segQuote = document.getElementById('selectionModeQuote');
+  const segBranch = document.getElementById('selectionModeBranch');
+  if (segQuote) {
+    segQuote.classList.toggle('active', mode === 'quote');
+    segQuote.setAttribute('aria-selected', String(mode === 'quote'));
+  }
+  if (segBranch) {
+    segBranch.classList.toggle('active', mode === 'branch');
+    segBranch.setAttribute('aria-selected', String(mode === 'branch'));
+  }
+  /* Re-render composer area to reflect new mode */
+  updateComposerHint();
 }
 
 export function getSelectionSummaryModelLabel(model) {
@@ -207,13 +240,28 @@ export async function refreshSelectionSummary() {
 // ── Composer mode ────────────────────────────────────────────────────────────
 
 export function getComposerMode(selection = getSelectedContextNodes()) {
-  if (selection.length === 1 && selection[0].type === 'model' && !shouldUseSelectionSummary(selection)) {
-    const round = selection[0].activeRound || getLatestRound(selection[0]);
+  /* Single model card selected — show rich preview that always names the
+     model + round. F1 mode toggle differentiates the next-send behavior. */
+  if (selection.length === 1 && selection[0].type === 'model') {
+    const node = selection[0];
+    const round = node.activeRound || getLatestRound(node);
+    const modelLabel = getDisplayName(node.model);
+    if (state.modelSelectionMode === 'branch') {
+      return {
+        key: 'branch',
+        label: `${modelLabel} · 第 ${round} 轮`,
+        sendLabel: '分支发送',
+        hint: `继续 ${modelLabel} · 第 ${round} 轮 · 仅此模型分支（自动继承结论与压缩过程）`,
+      };
+    }
+    /* quote mode (default) */
     return {
-      key: 'branch',
-      label: `继续 ${getDisplayName(selection[0].model)} · 第 ${round} 轮`,
-      sendLabel: '分支发送',
-      hint: `继续 ${getDisplayName(selection[0].model)} · 第 ${round} 轮，自动继承结论与压缩过程。`,
+      key: 'quote',
+      label: `${modelLabel} · 第 ${round} 轮 → 全部模型`,
+      sendLabel: '引用并继续',
+      hint: selectionSummaryState.loading
+        ? `引用 ${modelLabel} 第 ${round} 轮 → 让所有模型继续讨论；Kimi 正在压缩上下文…`
+        : `引用 ${modelLabel} 第 ${round} 轮 → 让所有模型继续讨论`,
     };
   }
   if (shouldUseSelectionSummary(selection)) {
@@ -236,15 +284,47 @@ export function getComposerMode(selection = getSelectedContextNodes()) {
 
 export function updateComposerHint() {
   const mode = getComposerMode();
+  const selection = getSelectedContextNodes();
+  const isSingleModel = selection.length === 1 && selection[0].type === 'model';
   document.getElementById('roundHint').textContent = mode.hint;
   if (composerModeEl) {
-    composerModeEl.textContent = mode.label;
-    composerModeEl.dataset.mode = mode.key;
+    /* When a single model is selected, render the pill as a clickable
+       toggle so the user can switch quote↔branch right from the composer.
+       The click is handled via delegation wired once at module init. */
+    if (isSingleModel) {
+      const isQuote = state.modelSelectionMode === 'quote';
+      composerModeEl.innerHTML = `
+        <span class="mode-pill-label">${escapeHtml(mode.label)}</span>
+        <button type="button" class="mode-pill-toggle" data-toggle-mode title="切换 引用所有模型 / 仅此模型">
+          ${isQuote ? '📤' : '⎇'}
+        </button>
+      `;
+      composerModeEl.dataset.mode = mode.key;
+      composerModeEl.classList.add('clickable');
+    } else {
+      composerModeEl.textContent = mode.label;
+      composerModeEl.dataset.mode = mode.key;
+      composerModeEl.classList.remove('clickable');
+    }
   }
   renderSelectedChips();
-  // 不再自动触发总结——仅在发送时按需执行，节省 token
   renderSelectionSummary();
 }
+
+/* Delegated click handler for the composer mode-pill toggle. Wired once at
+   module init so updateComposerHint can rebuild innerHTML safely without
+   re-attaching listeners every render. */
+let _composerModeDelegated = false;
+function ensureComposerModeDelegation() {
+  if (_composerModeDelegated || !composerModeEl) return;
+  _composerModeDelegated = true;
+  composerModeEl.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-toggle-mode]')) return;
+    event.stopPropagation();
+    setModelSelectionMode(state.modelSelectionMode === 'quote' ? 'branch' : 'quote');
+  });
+}
+ensureComposerModeDelegation();
 
 // ── Selection chips ──────────────────────────────────────────────────────────
 
@@ -309,6 +389,8 @@ export function renderSelectionState() {
   updateSelectionActions();
   scheduleRenderEdges();
   scheduleRenderMinimap();
+  /* B2: cluster frame highlight follows selection */
+  scheduleRenderClusterFrames();
 }
 
 export function updateSelectionActions() {
@@ -335,8 +417,21 @@ export function updateSelectionActions() {
   selectionActionsEl.style.top = `${top}px`;
   selectionActionsEl.classList.remove('hidden');
   const singleModel = selection.length === 1 && selection[0].type === 'model';
-  selectionContinueBtn.textContent = singleModel ? '继续此模型' : '继续对话';
+  /* F1: continue button is now just "focus composer" (the segmented control
+     owns mode semantics). Keep the label stable regardless of selection. */
+  selectionContinueBtn.textContent = '继续讨论';
   selectionBranchBtn.disabled = !singleModel;
+  /* Show / hide the F1 model-mode segmented control */
+  const segmentEl = document.getElementById('selectionModeSegment');
+  if (segmentEl) {
+    segmentEl.classList.toggle('hidden', !singleModel);
+    if (singleModel) {
+      const segQuote = document.getElementById('selectionModeQuote');
+      const segBranch = document.getElementById('selectionModeBranch');
+      segQuote?.classList.toggle('active', state.modelSelectionMode === 'quote');
+      segBranch?.classList.toggle('active', state.modelSelectionMode === 'branch');
+    }
+  }
 }
 
 export function clearSelection() {

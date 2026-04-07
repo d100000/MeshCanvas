@@ -35,52 +35,244 @@ export function scheduleRenderMinimap() {
   }, 33);
 }
 
+// Cluster-frame layer (B2): rendered between edges and nodes, holds the
+// dashed bounding-box outlines for each cluster. Created lazily on first
+// applyTransform so HTML structure changes are localized to canvas.js.
+let _clusterFrameLayerEl = null;
+function ensureClusterFrameLayer() {
+  if (_clusterFrameLayerEl) return _clusterFrameLayerEl;
+  _clusterFrameLayerEl = document.getElementById('clusterFrameLayer');
+  if (!_clusterFrameLayerEl) {
+    _clusterFrameLayerEl = document.createElement('div');
+    _clusterFrameLayerEl.id = 'clusterFrameLayer';
+    _clusterFrameLayerEl.className = 'cluster-frame-layer';
+    /* Insert between edge-layer and stage so frames sit under the nodes. */
+    edgeLayerEl.parentNode.insertBefore(_clusterFrameLayerEl, stageEl);
+  }
+  return _clusterFrameLayerEl;
+}
+
 export function applyTransform() {
   const transform = `translate(${state.offsetX}px, ${state.offsetY}px) scale(${state.scale})`;
   stageEl.style.transform = transform;
   gridEl.style.transform = transform;
   edgeLayerEl.style.transform = transform;
+  const frameLayer = ensureClusterFrameLayer();
+  if (frameLayer) frameLayer.style.transform = transform;
   zoomResetBtn.textContent = `${Math.round(state.scale * 100)}%`;
   updateSelectionActions();
+}
+
+// ── Cluster visual frames (B2) ──────────────────────────────────────────────
+const FRAME_PADDING = 24;
+let _rafClusterFramesScheduled = false;
+
+export function scheduleRenderClusterFrames() {
+  if (_rafClusterFramesScheduled) return;
+  _rafClusterFramesScheduled = true;
+  requestAnimationFrame(() => {
+    _rafClusterFramesScheduled = false;
+    renderClusterFrames();
+  });
+}
+
+export function renderClusterFrames() {
+  const layer = ensureClusterFrameLayer();
+  if (!layer) return;
+  if (!requestClusters.size) {
+    layer.innerHTML = '';
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const cluster of requestClusters.values()) {
+    if (!cluster.bbox) continue;
+    const { x, y, width, height } = cluster.bbox;
+    const frame = document.createElement('div');
+    frame.className = 'cluster-frame';
+    frame.dataset.requestId = cluster.requestId;
+    frame.style.left = `${x - FRAME_PADDING}px`;
+    frame.style.top = `${y - FRAME_PADDING}px`;
+    frame.style.width = `${width + FRAME_PADDING * 2}px`;
+    frame.style.height = `${height + FRAME_PADDING * 2}px`;
+
+    /* Label = first ~30 chars of the user's question (cached on cluster). */
+    const labelText = cluster.labelText;
+    if (labelText) {
+      const label = document.createElement('div');
+      label.className = 'cluster-frame-label';
+      label.textContent = labelText.length >= 30 ? labelText + '…' : labelText;
+      frame.appendChild(label);
+    }
+
+    /* Highlight when any node in the cluster is selected */
+    const isActive =
+      (cluster.userNodeId && selectedNodeIds.has(cluster.userNodeId)) ||
+      (Array.isArray(cluster.modelNodeIds) && cluster.modelNodeIds.some((id) => selectedNodeIds.has(id))) ||
+      (cluster.conclusionNodeId && selectedNodeIds.has(cluster.conclusionNodeId));
+    if (isActive) frame.classList.add('active');
+
+    frag.appendChild(frame);
+  }
+  layer.innerHTML = '';
+  layer.appendChild(frag);
+}
+
+// Marquee (box-select) state — module-private. Set during a left-drag from
+// empty canvas with no Space key held; cleared on pointerup / blur.
+let _marqueeStart = null; // { worldX, worldY, clientX, clientY, additive, baseSelection }
+let _marqueeEl = null;
+// Tracks whether the spacebar is currently held — toggles plain drag from
+// box-select to pan, matching Figma/Miro convention.
+let _spaceHeld = false;
+export function isSpaceHeld() { return _spaceHeld; }
+export function setSpaceHeld(v) {
+  _spaceHeld = !!v;
+  viewportEl.classList.toggle('space-held', _spaceHeld);
+}
+
+function ensureMarqueeEl() {
+  if (_marqueeEl) return _marqueeEl;
+  _marqueeEl = document.createElement('div');
+  _marqueeEl.className = 'marquee';
+  viewportEl.appendChild(_marqueeEl);
+  return _marqueeEl;
+}
+function cancelMarquee() {
+  if (_marqueeEl) { _marqueeEl.remove(); _marqueeEl = null; }
+  _marqueeStart = null;
+}
+function updateMarquee(event) {
+  if (!_marqueeStart) return;
+  const rect = viewportEl.getBoundingClientRect();
+  const x1 = Math.min(_marqueeStart.clientX, event.clientX) - rect.left;
+  const y1 = Math.min(_marqueeStart.clientY, event.clientY) - rect.top;
+  const x2 = Math.max(_marqueeStart.clientX, event.clientX) - rect.left;
+  const y2 = Math.max(_marqueeStart.clientY, event.clientY) - rect.top;
+  const el = ensureMarqueeEl();
+  el.style.left = `${x1}px`;
+  el.style.top = `${y1}px`;
+  el.style.width = `${x2 - x1}px`;
+  el.style.height = `${y2 - y1}px`;
+
+  /* Live selection update so the user sees what they're about to grab. */
+  const worldX2 = (event.clientX - rect.left - state.offsetX) / state.scale;
+  const worldY2 = (event.clientY - rect.top - state.offsetY) / state.scale;
+  const minX = Math.min(_marqueeStart.worldX, worldX2);
+  const minY = Math.min(_marqueeStart.worldY, worldY2);
+  const maxX = Math.max(_marqueeStart.worldX, worldX2);
+  const maxY = Math.max(_marqueeStart.worldY, worldY2);
+
+  const inside = new Set();
+  for (const node of nodes.values()) {
+    const dim = getNodeDimensions(node);
+    if (
+      node.x + dim.width >= minX &&
+      node.x <= maxX &&
+      node.y + dim.height >= minY &&
+      node.y <= maxY
+    ) {
+      inside.add(node.nodeId);
+    }
+  }
+
+  selectedNodeIds.clear();
+  if (_marqueeStart.additive && _marqueeStart.baseSelection) {
+    for (const id of _marqueeStart.baseSelection) selectedNodeIds.add(id);
+  }
+  for (const id of inside) selectedNodeIds.add(id);
+  appState.selectedNodeId = selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null;
+  state.selectionSource = 'marquee';
+  /* Don't call renderSelectionState (would trigger circular import); just
+     toggle the basic .selected class on dragged-into nodes. */
+  for (const node of nodes.values()) {
+    node.root.classList.toggle('selected', selectedNodeIds.has(node.nodeId));
+  }
+  updateSelectionActions();
+  scheduleRenderClusterFrames();
+}
+function finishMarquee(moved) {
+  if (!_marqueeStart) return;
+  const additive = _marqueeStart.additive;
+  cancelMarquee();
+  if (!moved && !additive) {
+    /* Treat as a click on empty canvas → clear selection */
+    clearSelection();
+  }
+  /* When moved=true, selection was live-updated by updateMarquee. */
 }
 
 export function bindCanvasPan() {
   window.addEventListener('blur', () => {
     state.panning = false;
     viewportEl.classList.remove('panning');
+    setSpaceHeld(false);
+    cancelMarquee();
   });
 
   viewportEl.addEventListener('pointerdown', (event) => {
     if (event.target.closest('.node, .minimap, .selection-actions, .needs-setup-banner')) return;
-    if (event.button !== 0) return;
-
-    state.panning = true;
-    state.panStartX = event.clientX;
-    state.panStartY = event.clientY;
-    state.originOffsetX = state.offsetX;
-    state.originOffsetY = state.offsetY;
-    viewportEl.classList.add('panning');
-    viewportEl.setPointerCapture(event.pointerId);
+    if (event.button !== 0 && event.button !== 1) return; // left or middle
+    /* Decide mode:
+       - Middle mouse OR Space held → pan
+       - Otherwise → marquee box-select */
+    const wantPan = event.button === 1 || _spaceHeld;
+    if (wantPan) {
+      state.panning = true;
+      state.panStartX = event.clientX;
+      state.panStartY = event.clientY;
+      state.originOffsetX = state.offsetX;
+      state.originOffsetY = state.offsetY;
+      viewportEl.classList.add('panning');
+      viewportEl.setPointerCapture(event.pointerId);
+    } else {
+      /* Start marquee selection */
+      const rect = viewportEl.getBoundingClientRect();
+      const worldX = (event.clientX - rect.left - state.offsetX) / state.scale;
+      const worldY = (event.clientY - rect.top - state.offsetY) / state.scale;
+      _marqueeStart = {
+        worldX,
+        worldY,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        additive: event.shiftKey,
+        baseSelection: event.shiftKey ? new Set(selectedNodeIds) : null,
+      };
+      state.panning = false;
+      viewportEl.setPointerCapture(event.pointerId);
+    }
   });
 
   viewportEl.addEventListener('pointermove', (event) => {
-    if (!state.panning) return;
-    state.offsetX = state.originOffsetX + (event.clientX - state.panStartX);
-    state.offsetY = state.originOffsetY + (event.clientY - state.panStartY);
-    applyTransform();
-    scheduleRenderMinimap();
+    if (state.panning) {
+      state.offsetX = state.originOffsetX + (event.clientX - state.panStartX);
+      state.offsetY = state.originOffsetY + (event.clientY - state.panStartY);
+      applyTransform();
+      scheduleRenderMinimap();
+      return;
+    }
+    if (_marqueeStart) {
+      updateMarquee(event);
+    }
   });
 
   function stopPan(event) {
-    if (!state.panning) return;
-    const moved = Math.abs(event.clientX - state.panStartX) > 4 ||
-                  Math.abs(event.clientY - state.panStartY) > 4;
-    state.panning = false;
-    viewportEl.classList.remove('panning');
-    try { viewportEl.releasePointerCapture(event.pointerId); } catch (_) {}
+    if (state.panning) {
+      const moved = Math.abs(event.clientX - state.panStartX) > 4 ||
+                    Math.abs(event.clientY - state.panStartY) > 4;
+      state.panning = false;
+      viewportEl.classList.remove('panning');
+      try { viewportEl.releasePointerCapture(event.pointerId); } catch (_) {}
 
-    if (!moved && !event.target.closest('.node')) {
-      clearSelection();
+      if (!moved && !event.target.closest('.node')) {
+        clearSelection();
+      }
+      return;
+    }
+    if (_marqueeStart) {
+      const moved = Math.abs(event.clientX - _marqueeStart.clientX) > 4 ||
+                    Math.abs(event.clientY - _marqueeStart.clientY) > 4;
+      try { viewportEl.releasePointerCapture(event.pointerId); } catch (_) {}
+      finishMarquee(moved);
     }
   }
 
@@ -350,6 +542,8 @@ export function updateClusterBounds(requestId) {
     };
     cluster.baseX = minX + cluster.bbox.width / 2;
     cluster.baseY = minY;
+    /* B2: any bbox change re-renders the cluster frame */
+    scheduleRenderClusterFrames();
   }
 }
 
@@ -425,6 +619,7 @@ export function clearCanvas() {
 
   stageEl.innerHTML = '';
   edgeLayerEl.innerHTML = '';
+  if (_clusterFrameLayerEl) _clusterFrameLayerEl.innerHTML = '';
   requestClusters.clear();
   nodes.clear();
   edges.clear();

@@ -14,7 +14,8 @@ import {
 import { clamp, showModal, showAlert } from './utils.js';
 import {
   applyTransform, bindCanvasPan, setZoom, focusCluster, fitAllNodes,
-  renderMinimap, toggleSidebar,
+  renderMinimap, toggleSidebar, setSpaceHeld, updateClusterBounds,
+  scheduleRenderClusterFrames,
 } from './canvas.js';
 import {
   getSelectedContextNodes, shouldUseSelectionSummary,
@@ -38,7 +39,15 @@ function sendMessage() {
   setTimeout(() => { _sendThrottled = false; sendBtn.disabled = false; }, 500);
 
   const selected = getSelectedContextNodes();
-  if (selected.length === 1 && selected[0].type === 'model' && !shouldUseSelectionSummary(selected)) {
+  /* F1: single model selected respects state.modelSelectionMode.
+     - 'branch' → send a branch_chat to that one model only
+     - 'quote'  → fall through to multi-model chat with model's reply quoted */
+  if (
+    selected.length === 1 &&
+    selected[0].type === 'model' &&
+    state.modelSelectionMode === 'branch' &&
+    !shouldUseSelectionSummary(selected)
+  ) {
     sendBranch(selected[0], message);
     messageInput.value = '';
     autoResizeComposer();
@@ -199,9 +208,24 @@ document.addEventListener('click', (event) => {
 
 // ── Keyboard shortcuts ──────────────────────────────────────────────────────
 
-document.addEventListener('keydown', (e) => {
+import { nodes } from './state.js';
+import { schedulePositionSave } from './clusters.js';
+
+function isTypingTarget() {
   const tag = document.activeElement?.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (document.activeElement?.isContentEditable) return true;
+  return false;
+}
+
+document.addEventListener('keydown', (e) => {
+  /* Track Space key for pan-mode toggle (only when NOT typing). */
+  if (e.code === 'Space' && !isTypingTarget()) {
+    setSpaceHeld(true);
+    e.preventDefault();
+  }
+
+  if (isTypingTarget()) return;
 
   if (e.key === 'Escape') {
     clearSelection();
@@ -224,6 +248,53 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'f' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
     if (appState.latestRequestId) focusCluster(appState.latestRequestId);
+  }
+
+  /* Cmd/Ctrl + A — select all nodes on canvas */
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+    e.preventDefault();
+    selectedNodeIds.clear();
+    for (const id of nodes.keys()) selectedNodeIds.add(id);
+    appState.selectedNodeId = selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null;
+    state.selectionSource = 'keyboard';
+    /* Toggle .selected class without going through full renderSelectionState
+       (avoids the dimmed-others side-effect for "all-selected"). */
+    for (const node of nodes.values()) node.root.classList.add('selected');
+    updateSelectionActions();
+    updateComposerHint();
+    scheduleRenderClusterFrames();
+  }
+
+  /* Arrow keys — nudge selected nodes (1px or 10px with Shift) */
+  if (selectedNodeIds.size && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    const step = e.shiftKey ? 10 : 1;
+    let dx = 0, dy = 0;
+    if (e.key === 'ArrowLeft') dx = -step;
+    if (e.key === 'ArrowRight') dx = step;
+    if (e.key === 'ArrowUp') dy = -step;
+    if (e.key === 'ArrowDown') dy = step;
+    const affectedClusters = new Set();
+    for (const id of selectedNodeIds) {
+      const n = nodes.get(id);
+      if (!n) continue;
+      n.x += dx;
+      n.y += dy;
+      n.root.style.left = `${n.x}px`;
+      n.root.style.top = `${n.y}px`;
+      if (n.requestId) affectedClusters.add(n.requestId);
+    }
+    for (const rid of affectedClusters) {
+      updateClusterBounds(rid);
+      schedulePositionSave(rid);
+    }
+    updateSelectionActions();
+    e.preventDefault();
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'Space') {
+    setSpaceHeld(false);
   }
 });
 
