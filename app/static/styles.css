@@ -1645,6 +1645,41 @@ button {
   background: rgba(107, 31, 204, 0.06);
 }
 
+.mode-pill.clickable {
+  padding: 0 4px 0 10px;
+  gap: 6px;
+  cursor: default;
+}
+
+.mode-pill .mode-pill-label {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mode-pill .mode-pill-toggle {
+  appearance: none;
+  border: 0;
+  background: rgba(107, 31, 204, 0.15);
+  color: var(--accent-strong);
+  font-size: 12px;
+  height: 20px;
+  width: 24px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+
+.mode-pill .mode-pill-toggle:hover {
+  background: rgba(107, 31, 204, 0.28);
+  transform: scale(1.08);
+}
+
 .save-status.ok {
   color: rgb(12, 140, 108);
   border-color: rgba(123, 38, 232, 0.18);

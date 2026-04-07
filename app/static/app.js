@@ -577,13 +577,30 @@ async function refreshSelectionSummary() {
 }
 
 function getComposerMode(selection = getSelectedContextNodes()) {
-  if (selection.length === 1 && selection[0].type === 'model' && !shouldUseSelectionSummary(selection)) {
-    const round = selection[0].activeRound || getLatestRound(selection[0]);
+  /* Single model card selected — show rich preview regardless of mode.
+     The mode (branch vs quote) is exposed both in the floating selection
+     toolbar AND inline in the composer hint, so the user can always see
+     and switch which behavior the next send will use. */
+  if (selection.length === 1 && selection[0].type === 'model') {
+    const node = selection[0];
+    const round = node.activeRound || getLatestRound(node);
+    const modelLabel = getDisplayName(node.model);
+    if (state.modelSelectionMode === 'branch') {
+      return {
+        key: 'branch',
+        label: `${modelLabel} · 第 ${round} 轮`,
+        sendLabel: '分支发送',
+        hint: `继续 ${modelLabel} · 第 ${round} 轮 · 仅此模型分支（自动继承结论与压缩过程）`,
+      };
+    }
+    /* quote mode (default) */
     return {
-      key: 'branch',
-      label: `继续 ${getDisplayName(selection[0].model)} · 第 ${round} 轮`,
-      sendLabel: '分支发送',
-      hint: `继续 ${getDisplayName(selection[0].model)} · 第 ${round} 轮，自动继承结论与压缩过程。`,
+      key: 'quote',
+      label: `${modelLabel} · 第 ${round} 轮 → 全部模型`,
+      sendLabel: '引用并继续',
+      hint: selectionSummaryState.loading
+        ? `引用 ${modelLabel} 第 ${round} 轮 → 让所有模型继续讨论；Kimi 正在压缩上下文…`
+        : `引用 ${modelLabel} 第 ${round} 轮 → 让所有模型继续讨论`,
     };
   }
   if (shouldUseSelectionSummary(selection)) {
@@ -736,10 +753,36 @@ function refreshStatus() {
 
 function updateComposerHint() {
   const mode = getComposerMode();
+  const selection = getSelectedContextNodes();
+  const isSingleModel = selection.length === 1 && selection[0].type === 'model';
   document.getElementById('roundHint').textContent = mode.hint;
   if (composerModeEl) {
-    composerModeEl.textContent = mode.label;
-    composerModeEl.dataset.mode = mode.key;
+    /* Bug fix: when a single model is selected, render the mode pill as a
+       clickable toggle so the user can switch quote↔branch right from the
+       composer (in addition to the floating toolbar). */
+    if (isSingleModel) {
+      const isQuote = state.modelSelectionMode === 'quote';
+      composerModeEl.innerHTML = `
+        <span class="mode-pill-label">${escapeHtml(mode.label)}</span>
+        <button type="button" class="mode-pill-toggle" data-toggle-mode title="切换 引用所有模型 / 仅此模型">
+          ${isQuote ? '📤' : '⎇'}
+        </button>
+      `;
+      composerModeEl.dataset.mode = mode.key;
+      composerModeEl.classList.add('clickable');
+      const toggleBtn = composerModeEl.querySelector('[data-toggle-mode]');
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setModelSelectionMode(state.modelSelectionMode === 'quote' ? 'branch' : 'quote');
+          updateComposerHint();
+        });
+      }
+    } else {
+      composerModeEl.textContent = mode.label;
+      composerModeEl.dataset.mode = mode.key;
+      composerModeEl.classList.remove('clickable');
+    }
   }
   renderSelectedChips();
   queueSelectionSummaryRefresh();
@@ -4116,11 +4159,12 @@ if (sidebarNewCanvasBtn) sidebarNewCanvasBtn.addEventListener('click', async () 
   await switchCanvas(created.canvas_id);
 });
 
-document.addEventListener('click', (event) => {
-  if (!event.target.closest('.node')) {
-    clearSelection();
-  }
-});
+/* Bug fix: removed the document-wide "click anything not a .node = clearSelection"
+   handler. It was clearing the selection whenever the user clicked the composer,
+   sidebar, toolbar, minimap, or any UI chrome — making it impossible to
+   "select a card, then type a question". Empty-canvas clicks are already
+   handled by `stopPan()` in bindCanvasPan via the click-vs-drag detection,
+   so this listener was redundant. */
 
 /* ─── Global keyboard shortcuts ──────────────────────────────────────────
  *  Esc          清除选择
