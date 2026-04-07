@@ -15,6 +15,9 @@ const CONCLUSION_CONTEXT_MAX_CHARS = 3000;
 
 let _rafEdgesScheduled = false;
 let _rafMinimapScheduled = false;
+let _rafTransformScheduled = false;
+let _rafSelectionActionsScheduled = false;
+let _rafClusterFramesScheduled = false;
 
 function scheduleRenderEdges() {
   if (_rafEdgesScheduled) return;
@@ -31,6 +34,39 @@ function scheduleRenderMinimap() {
   requestAnimationFrame(() => {
     _rafMinimapScheduled = false;
     renderMinimap();
+  });
+}
+
+/* Coalesces multiple wheel/pan/zoom events into a single rAF callback,
+   so the transform is committed at most once per frame. */
+function scheduleApplyTransform() {
+  if (_rafTransformScheduled) return;
+  _rafTransformScheduled = true;
+  requestAnimationFrame(() => {
+    _rafTransformScheduled = false;
+    applyTransform();
+  });
+}
+
+/* Defers the (expensive) selection toolbar reposition until the next frame.
+   updateSelectionActions reads getBoundingClientRect on every selected node
+   so we want to avoid running it synchronously inside pan/zoom handlers. */
+function scheduleSelectionActionsRefresh() {
+  if (_rafSelectionActionsScheduled) return;
+  _rafSelectionActionsScheduled = true;
+  requestAnimationFrame(() => {
+    _rafSelectionActionsScheduled = false;
+    updateSelectionActions();
+  });
+}
+
+/* B2: rAF-coalesced cluster frame redraw. */
+function scheduleRenderClusterFrames() {
+  if (_rafClusterFramesScheduled) return;
+  _rafClusterFramesScheduled = true;
+  requestAnimationFrame(() => {
+    _rafClusterFramesScheduled = false;
+    renderClusterFrames();
   });
 }
 
@@ -54,6 +90,8 @@ const viewportEl = document.getElementById('canvasViewport');
 const stageEl = document.getElementById('canvasStage');
 const gridEl = document.querySelector('.canvas-grid');
 const edgeLayerEl = document.getElementById('edgeLayer');
+const clusterFrameLayerEl = document.getElementById('clusterFrameLayer');
+const alignGuideLayerEl = document.getElementById('alignGuideLayer');
 const minimapContentEl = document.getElementById('minimapContent');
 const minimapNodesEl = document.getElementById('minimapNodes');
 const minimapViewportEl = document.getElementById('minimapViewport');
@@ -135,18 +173,213 @@ const state = {
   draggingNodeId: null,
   dragStartX: 0,
   dragStartY: 0,
-  originNodeX: 0,
-  originNodeY: 0,
+  // Multi-select drag: snapshot of starting positions for every node being dragged
+  dragOrigins: null,         // Map<nodeId, {x, y}>
+  dragClusterIds: null,      // Set<requestId>
   selectionSource: 'none',
+  // F1: when a single model card is selected, controls whether the next
+  // sendMessage() goes as a single-model branch or as a multi-model chat
+  // with the selected model's response quoted as context.
+  // 'quote' (default) — send to all models with quote
+  // 'branch'          — send only to that one model as a branch
+  modelSelectionMode: 'quote',
 };
+
+/* Restore last-used model selection mode from localStorage. */
+try {
+  const saved = localStorage.getItem('nb:modelSelMode');
+  if (saved === 'branch' || saved === 'quote') {
+    state.modelSelectionMode = saved;
+  }
+} catch (_e) { /* ignore SSR / private mode */ }
+
+/* ─── Undo / Redo history (C1) ──────────────────────────────────────────────
+ * Lightweight client-side history for reversible visual operations.
+ *
+ * Supported entry types:
+ *   - 'move'   { ops: [{nodeId, fromX, fromY, toX, toY}, ...] }
+ *   - 'hide'   { clusterId, nodes: [{nodeId, x, y}], frameSnapshot }
+ *
+ * NOT included in history (they need backend coordination):
+ *   - Creating new clusters via chat
+ *   - Server-side delete (clearCanvas)
+ *
+ * Stack semantics:
+ *   pushHistory()  → truncates anything past `historyIndex` and appends
+ *   undo()         → applies inverse of historyStack[historyIndex], moves index back
+ *   redo()         → re-applies historyStack[historyIndex+1], moves index forward
+ */
+const historyStack = [];
+let historyIndex = -1;
+const HISTORY_MAX = 100;
+
+function pushHistory(entry) {
+  /* Drop anything ahead of current index (lost futures after a new edit) */
+  if (historyIndex < historyStack.length - 1) {
+    historyStack.splice(historyIndex + 1);
+  }
+  historyStack.push(entry);
+  if (historyStack.length > HISTORY_MAX) {
+    historyStack.shift();
+  } else {
+    historyIndex = historyStack.length - 1;
+  }
+}
+
+function applyMoveEntry(entry, direction) {
+  /* direction = 'undo' or 'redo' */
+  const affectedClusters = new Set();
+  for (const op of entry.ops) {
+    const node = nodes.get(op.nodeId);
+    if (!node) continue;
+    if (direction === 'undo') {
+      node.x = op.fromX;
+      node.y = op.fromY;
+    } else {
+      node.x = op.toX;
+      node.y = op.toY;
+    }
+    node.root.style.left = `${node.x}px`;
+    node.root.style.top = `${node.y}px`;
+    const rid = findClusterIdForNode(op.nodeId);
+    if (rid) affectedClusters.add(rid);
+  }
+  for (const rid of affectedClusters) {
+    updateClusterBounds(rid);
+    schedulePositionSave(rid);
+  }
+  scheduleRenderEdges();
+  scheduleRenderMinimap();
+  scheduleSelectionActionsRefresh();
+}
+
+function applyHideEntry(entry, direction) {
+  if (direction === 'undo') {
+    /* Re-show the hidden cluster */
+    const cluster = entry.frameSnapshot;
+    if (!cluster) return;
+    requestClusters.set(cluster.requestId, cluster);
+    for (const ns of entry.nodes) {
+      const node = ns.node;
+      node.x = ns.x;
+      node.y = ns.y;
+      stageEl.appendChild(node.root);
+      node.root.style.left = `${node.x}px`;
+      node.root.style.top = `${node.y}px`;
+      nodes.set(node.nodeId, node);
+      observeNodeResize(node.root, node.nodeId);
+    }
+    /* Restore the edges */
+    for (const e of entry.edges || []) {
+      edges.set(e.id, e);
+    }
+    updateClusterBounds(cluster.requestId);
+    scheduleRenderEdges();
+    scheduleRenderMinimap();
+    scheduleRenderClusterFrames();
+  } else {
+    /* Redo = hide again */
+    hideClusterVisual(entry.frameSnapshot.requestId, /*recordHistory*/ false);
+  }
+}
+
+/* C4: Visually hide a cluster (frontend-only — server data is untouched).
+   Returns the snapshot so callers (history) can restore it. */
+function hideClusterVisual(requestId, recordHistory = true) {
+  const cluster = requestClusters.get(requestId);
+  if (!cluster) return null;
+  /* Snapshot all nodes that belong to this cluster */
+  const nodeIds = [cluster.userNodeId, ...(cluster.modelNodeIds || [])];
+  if (cluster.conclusionNodeId) nodeIds.push(cluster.conclusionNodeId);
+  const snapshot = { frameSnapshot: cluster, nodes: [], edges: [] };
+  for (const id of nodeIds) {
+    const node = nodes.get(id);
+    if (!node) continue;
+    snapshot.nodes.push({ node, x: node.x, y: node.y });
+    /* Detach DOM but keep the element in memory */
+    node.root.remove();
+    nodes.delete(id);
+    nodeIdToClusterId.delete(id);
+    selectedNodeIds.delete(id);
+  }
+  /* Snapshot + remove edges that touch this cluster */
+  for (const [edgeId, edge] of edges) {
+    if (
+      nodeIds.includes(edge.sourceId) ||
+      nodeIds.includes(edge.targetId)
+    ) {
+      snapshot.edges.push(edge);
+      edges.delete(edgeId);
+    }
+  }
+  requestClusters.delete(requestId);
+  if (recordHistory) {
+    pushHistory({ type: 'hide', ...snapshot });
+  }
+  scheduleRenderEdges();
+  scheduleRenderMinimap();
+  scheduleRenderClusterFrames();
+  scheduleSelectionActionsRefresh();
+  return snapshot;
+}
+
+function deleteSelected() {
+  if (!selectedNodeIds.size) return;
+  /* Collect unique cluster ids from the selection */
+  const clusterIds = new Set();
+  for (const nodeId of selectedNodeIds) {
+    const rid = findClusterIdForNode(nodeId);
+    if (rid) clusterIds.add(rid);
+  }
+  if (!clusterIds.size) return;
+  /* Hide each cluster (one history entry per cluster — keeps undo granular) */
+  for (const rid of clusterIds) {
+    hideClusterVisual(rid);
+  }
+}
+
+function undo() {
+  if (historyIndex < 0) return;
+  const entry = historyStack[historyIndex];
+  historyIndex -= 1;
+  if (entry.type === 'move') applyMoveEntry(entry, 'undo');
+  else if (entry.type === 'hide') applyHideEntry(entry, 'undo');
+}
+
+function redo() {
+  if (historyIndex >= historyStack.length - 1) return;
+  historyIndex += 1;
+  const entry = historyStack[historyIndex];
+  if (entry.type === 'move') applyMoveEntry(entry, 'redo');
+  else if (entry.type === 'hide') applyHideEntry(entry, 'redo');
+}
 
 const requestClusters = new Map();
 const nodes = new Map();
 const edges = new Map();
 const pendingSearchEvents = new Map();
+// Reverse index: nodeId → owning cluster's requestId (O(1) lookup)
+const nodeIdToClusterId = new Map();
 
 function getCluster(requestId) {
   return requestClusters.get(requestId) || null;
+}
+
+/* Find which cluster owns a given nodeId. O(1) on cache hit, O(N) miss + memo. */
+function findClusterIdForNode(nodeId) {
+  const cached = nodeIdToClusterId.get(nodeId);
+  if (cached && requestClusters.has(cached)) return cached;
+  for (const cluster of requestClusters.values()) {
+    if (
+      cluster.userNodeId === nodeId ||
+      cluster.conclusionNodeId === nodeId ||
+      (cluster.modelNodeIds && cluster.modelNodeIds.includes(nodeId))
+    ) {
+      nodeIdToClusterId.set(nodeId, cluster.requestId);
+      return cluster.requestId;
+    }
+  }
+  return null;
 }
 
 function setSaveStatus(text = '', type = '', autoHide = true) {
@@ -191,7 +424,14 @@ function summarizeText(value, maxLength = 34) {
 
 function shouldUseSelectionSummary(selection = getSelectedContextNodes()) {
   if (!selection.length) return false;
-  return !(selection.length === 1 && selection[0].type === 'model' && state.selectionSource === 'click');
+  /* Single click on a model card is the only selection that historically
+     bypassed the summary path (forcing branch mode). With F1, the user can
+     now explicitly switch this case to "quote → all models", in which case
+     we DO want the summary/context bundle to be built. */
+  if (selection.length === 1 && selection[0].type === 'model' && state.selectionSource === 'click') {
+    return state.modelSelectionMode === 'quote';
+  }
+  return true;
 }
 
 function getSelectionSummaryModelLabel(model) {
@@ -394,8 +634,22 @@ function updateSelectionActions() {
   selectionActionsEl.style.top = `${top}px`;
   selectionActionsEl.classList.remove('hidden');
   const singleModel = selection.length === 1 && selection[0].type === 'model';
-  selectionContinueBtn.textContent = singleModel ? '继续此模型' : '继续对话';
+  /* F1: continue button is the simple "focus composer" action; segmented
+     control owns the mode semantics. Label is steady regardless of selection. */
+  selectionContinueBtn.textContent = '继续讨论';
   selectionBranchBtn.disabled = !singleModel;
+  /* Show / hide the model-mode segmented control */
+  const segmentEl = document.getElementById('selectionModeSegment');
+  if (segmentEl) {
+    segmentEl.classList.toggle('hidden', !singleModel);
+    if (singleModel) {
+      /* Re-sync active button state in case it got out of sync */
+      const segQuote = document.getElementById('selectionModeQuote');
+      const segBranch = document.getElementById('selectionModeBranch');
+      segQuote?.classList.toggle('active', state.modelSelectionMode === 'quote');
+      segBranch?.classList.toggle('active', state.modelSelectionMode === 'branch');
+    }
+  }
 }
 
 function setSearchCollapsed(userNode, collapsed) {
@@ -1356,26 +1610,47 @@ function placeCluster({ modelCount, parentRequestId, sourceModel }) {
   const centerWorldX = (viewportRect.width / 2 - state.offsetX) / state.scale;
   const centerWorldY = (viewportRect.height / 2 - state.offsetY) / state.scale;
 
+  refreshAllClusterBounds();
+
   let bbox;
   if (parentRequestId && sourceModel) {
+    /* ── Branch chat: anchor next to parent model node ── */
     const parentNode = getModelNode(parentRequestId, sourceModel);
     const parentX = parentNode?.x || centerWorldX;
     const parentY = parentNode?.y || centerWorldY;
-    const candidates = [
+    /* Try the 4 traditional candidates first, then fall back to spiral search */
+    const priorityCandidates = [
       { x: parentX, y: parentY + MODEL_NODE_HEIGHT + 180 },
       { x: parentX + MODEL_NODE_WIDTH + 160, y: parentY + 120 },
       { x: parentX - footprintWidth - 180, y: parentY + 120 },
       { x: parentX + MODEL_NODE_WIDTH + 160, y: parentY - 120 },
     ];
-    bbox = findAvailableBox(candidates, footprintWidth, footprintHeight);
+    bbox = findSmartPlacement(footprintWidth, footprintHeight, {
+      anchorX: parentX + (MODEL_NODE_WIDTH + 160 - footprintWidth) / 2,
+      anchorY: parentY + MODEL_NODE_HEIGHT + 180,
+      priorityCandidates,
+    });
   } else {
-    const topX = centerWorldX - footprintWidth / 2 + (clusterCount % 2) * 80;
-    const topY = centerWorldY - 120 + clusterCount * 120;
-    const candidates = [];
-    for (let row = 0; row < 40; row += 1) {
-      candidates.push({ x: topX, y: topY + row * (footprintHeight + 80) });
+    /* ── Main chat: anchor at the right side of user's selected cluster
+         (if any), otherwise at viewport center. ── */
+    const selectedBbox = unionBboxOfSelectedClusters();
+    let anchorX;
+    let anchorY;
+    let extraNoGoBoxes = [];
+    if (selectedBbox) {
+      /* Place to the right of the selection area, top-aligned */
+      anchorX = selectedBbox.x + selectedBbox.width + CLUSTER_PADDING;
+      anchorY = selectedBbox.y;
+      extraNoGoBoxes = [selectedBbox];
+    } else {
+      anchorX = centerWorldX - footprintWidth / 2;
+      anchorY = centerWorldY - footprintHeight / 4;
     }
-    bbox = findAvailableBox(candidates, footprintWidth, footprintHeight);
+    bbox = findSmartPlacement(footprintWidth, footprintHeight, {
+      anchorX,
+      anchorY,
+      extraNoGoBoxes,
+    });
     clusterCount += 1;
   }
 
@@ -1399,6 +1674,113 @@ function refreshAllClusterBounds() {
   }
 }
 
+/*
+ * Compute the union bounding box of every cluster that contains at least one
+ * currently-selected node. Returns null if there is no selection or no
+ * matching clusters.
+ */
+function unionBboxOfSelectedClusters() {
+  if (!selectedNodeIds.size) return null;
+  const seenClusters = new Set();
+  for (const nodeId of selectedNodeIds) {
+    const rid = findClusterIdForNode(nodeId);
+    if (rid) seenClusters.add(rid);
+  }
+  if (!seenClusters.size) return null;
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const rid of seenClusters) {
+    const cluster = requestClusters.get(rid);
+    if (!cluster?.bbox) continue;
+    minX = Math.min(minX, cluster.bbox.x);
+    minY = Math.min(minY, cluster.bbox.y);
+    maxX = Math.max(maxX, cluster.bbox.x + cluster.bbox.width);
+    maxY = Math.max(maxY, cluster.bbox.y + cluster.bbox.height);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/*
+ * Smart placement algorithm: directional spiral search around an anchor point.
+ *
+ *   Phase 1 — Try `priorityCandidates` (caller-provided seed positions).
+ *   Phase 2 — Try the 7 cardinal positions around the anchor in priority order
+ *             (anchor itself, right, down, right-down, left-down, left, up).
+ *   Phase 3 — Spiral outward from the anchor in expanding rings (8 directions
+ *             per ring, up to 10 rings).
+ *   Phase 4 — Fallback: append below the bottommost cluster.
+ *
+ * `extraNoGoBoxes` lets the caller add virtual obstacles (e.g. the selected
+ * cluster's bbox) so the new card never lands inside the user's current focus.
+ */
+function findSmartPlacement(width, height, opts = {}) {
+  const {
+    anchorX = 0,
+    anchorY = 0,
+    extraNoGoBoxes = [],
+    priorityCandidates = [],
+    maxRings = 10,
+  } = opts;
+
+  const tryBox = (x, y) => {
+    const candidate = { x, y, width, height };
+    if (!hasClusterOverlap(candidate, extraNoGoBoxes)) return candidate;
+    return null;
+  };
+
+  /* Phase 1: caller priority candidates */
+  for (const c of priorityCandidates) {
+    const found = tryBox(c.x, c.y);
+    if (found) return found;
+  }
+
+  /* Phase 2: cardinal positions around the anchor (priority order) */
+  const stepX = width + CLUSTER_PADDING * 2;
+  const stepY = height + CLUSTER_PADDING * 2;
+  const cardinals = [
+    { x: anchorX,         y: anchorY }, // anchor itself (highest)
+    { x: anchorX + stepX, y: anchorY }, // right
+    { x: anchorX,         y: anchorY + stepY }, // down
+    { x: anchorX + stepX, y: anchorY + stepY }, // right-down
+    { x: anchorX - stepX, y: anchorY + stepY }, // left-down
+    { x: anchorX - stepX, y: anchorY }, // left
+    { x: anchorX,         y: anchorY - stepY }, // up
+  ];
+  for (const c of cardinals) {
+    const found = tryBox(c.x, c.y);
+    if (found) return found;
+  }
+
+  /* Phase 3: spiral search — 8 directions × N rings */
+  for (let ring = 1; ring <= maxRings; ring += 1) {
+    const offsets = [
+      { dx:  ring * stepX, dy: 0              }, // E
+      { dx:  ring * stepX, dy:  ring * stepY  }, // SE
+      { dx: 0,             dy:  ring * stepY  }, // S
+      { dx: -ring * stepX, dy:  ring * stepY  }, // SW
+      { dx: -ring * stepX, dy: 0              }, // W
+      { dx: -ring * stepX, dy: -ring * stepY  }, // NW
+      { dx: 0,             dy: -ring * stepY  }, // N
+      { dx:  ring * stepX, dy: -ring * stepY  }, // NE
+    ];
+    for (const o of offsets) {
+      const found = tryBox(anchorX + o.dx, anchorY + o.dy);
+      if (found) return found;
+    }
+  }
+
+  /* Phase 4: fallback — stack below the bottommost existing cluster */
+  const fallbackY = Array.from(requestClusters.values()).reduce((maxY, cluster) => {
+    return Math.max(maxY, (cluster.bbox?.y || 0) + (cluster.bbox?.height || 0) + 120);
+  }, 0);
+  return { x: anchorX, y: fallbackY, width, height };
+}
+
+/* Legacy helper kept for backward compat — used by replayCluster path */
 function findAvailableBox(candidates, width, height) {
   refreshAllClusterBounds();
   for (const candidate of candidates) {
@@ -1413,9 +1795,23 @@ function findAvailableBox(candidates, width, height) {
   return { x: 0, y: fallbackY, width, height };
 }
 
-function hasClusterOverlap(nextBox) {
+function hasClusterOverlap(nextBox, extraNoGoBoxes = []) {
+  /* Check existing clusters */
   for (const cluster of requestClusters.values()) {
     const box = cluster.bbox;
+    if (!box) continue;
+    if (
+      nextBox.x + nextBox.width + CLUSTER_PADDING < box.x ||
+      box.x + box.width + CLUSTER_PADDING < nextBox.x ||
+      nextBox.y + nextBox.height + CLUSTER_PADDING < box.y ||
+      box.y + box.height + CLUSTER_PADDING < nextBox.y
+    ) {
+      continue;
+    }
+    return true;
+  }
+  /* Check extra no-go boxes (e.g. selected cluster union) */
+  for (const box of extraNoGoBoxes) {
     if (
       nextBox.x + nextBox.width + CLUSTER_PADDING < box.x ||
       box.x + box.width + CLUSTER_PADDING < nextBox.x ||
@@ -1519,6 +1915,7 @@ function createUserNode({
     outlineListEl: root.querySelector('.outline-list'),
   };
   nodes.set(nodeId, node);
+  observeNodeResize(root, nodeId);
   node.cancelBtn.addEventListener('click', () => cancelRequest(requestId));
   node.searchToggleBtn?.addEventListener('click', () => setSearchCollapsed(node, !node.searchCollapsed));
 }
@@ -1579,6 +1976,7 @@ function createModelNode({ nodeId, requestId, model, x, y }) {
     branchInput: root.querySelector('.branch-input'),
   };
   nodes.set(nodeId, node);
+  observeNodeResize(root, nodeId);
 
   root.querySelector('.branch-toggle').addEventListener('click', () => {
     openBranchComposer(node);
@@ -1667,6 +2065,7 @@ function createConclusionNode({ nodeId, requestId, x, y, model, markdown, status
     status: status || 'pending',
   };
   nodes.set(nodeId, node);
+  observeNodeResize(root, nodeId);
   if (node.retryBtn) node.retryBtn.disabled = node.status === 'pending';
 
   root.querySelector('.conclusion-copy').addEventListener('click', async (e) => {
@@ -1762,6 +2161,13 @@ function bindNodeInteractions(root, nodeId, requestId) {
     }
     renderSelectionState();
     updateComposerHint();
+  });
+  /* Double-click anywhere on the node body (skipping interactive children)
+     zooms-and-centers on the node. */
+  root.addEventListener('dblclick', (event) => {
+    if (event.target.closest('button, textarea, a, input, select')) return;
+    event.preventDefault();
+    focusNode(nodeId);
   });
 }
 
@@ -2049,9 +2455,16 @@ function addEdge(edge) {
   edges.set(edge.id, edge);
 }
 
+/* B4: edge selection state. Tracks which edge id is currently "selected"
+   (highlighted via click). Hover-highlight is computed at render time from
+   `hoverNodeId` plus this id. */
+let selectedEdgeId = null;
+
 function renderEdges() {
   const activeNodeId = hoverNodeId || selectedNodeId;
-  const paths = [];
+  /* B4: build real DOM elements (not innerHTML) so we can attach events. */
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const frag = document.createDocumentFragment();
   for (const edge of edges.values()) {
     const source = nodes.get(edge.sourceId);
     const target = nodes.get(edge.targetId);
@@ -2059,18 +2472,63 @@ function renderEdges() {
     const start = getAnchorPoint(source, edge.type, true);
     const end = getAnchorPoint(target, edge.type, false);
     const path = buildBezierPath(start, end);
+
+    /* Two paths: an invisible thick "hit" path for easy clicking and a
+       visible thin "stroke" path. Both share the same `d` attribute. */
+    const hit = document.createElementNS(SVG_NS, 'path');
+    hit.setAttribute('class', 'edge-hit');
+    hit.setAttribute('d', path);
+    hit.dataset.edgeId = edge.id;
+    hit.addEventListener('mouseenter', () => onEdgeHover(edge.id, true));
+    hit.addEventListener('mouseleave', () => onEdgeHover(edge.id, false));
+    hit.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      onEdgeClick(edge.id);
+    });
+
+    const visible = document.createElementNS(SVG_NS, 'path');
     const classes = ['edge-path'];
     if (edge.type === 'branch_from_turn') classes.push('branch');
+    if (selectedEdgeId === edge.id) classes.push('selected');
     if (activeNodeId) {
       if (edge.sourceId === activeNodeId || edge.targetId === activeNodeId) {
         classes.push('active');
-      } else {
+      } else if (selectedEdgeId !== edge.id) {
         classes.push('dimmed');
       }
     }
-    paths.push(`<path class="${classes.join(' ')}" d="${path}" />`);
+    visible.setAttribute('class', classes.join(' '));
+    visible.setAttribute('d', path);
+
+    frag.appendChild(hit);
+    frag.appendChild(visible);
   }
-  edgeLayerEl.innerHTML = paths.join('');
+  edgeLayerEl.innerHTML = '';
+  edgeLayerEl.appendChild(frag);
+}
+
+function onEdgeHover(edgeId, entering) {
+  /* Hover highlights the edge AND its two endpoint nodes via the existing
+     activeNodeId pathway. Cheapest path: just toggle a class on the visible
+     path elements. */
+  for (const path of edgeLayerEl.querySelectorAll('.edge-path')) {
+    if (path.previousSibling?.dataset?.edgeId === edgeId) {
+      path.classList.toggle('hovered', entering);
+    }
+  }
+}
+
+function onEdgeClick(edgeId) {
+  /* Toggle selection. Clicking again deselects. */
+  selectedEdgeId = (selectedEdgeId === edgeId) ? null : edgeId;
+  /* Selecting an edge clears node selection so the user has a single
+     focused object at any time. */
+  if (selectedEdgeId) {
+    selectedNodeIds.clear();
+    selectedNodeId = null;
+  }
+  renderSelectionState();
+  scheduleRenderEdges();
 }
 
 function renderSelectionState() {
@@ -2088,6 +2546,8 @@ function renderSelectionState() {
   }
   updateSelectionActions();
   scheduleRenderEdges();
+  /* B2: cluster frame highlight follows selection. */
+  scheduleRenderClusterFrames();
   scheduleRenderMinimap();
 }
 
@@ -2101,7 +2561,19 @@ function isNodeAdjacent(nodeId, activeNodeId) {
   return false;
 }
 
+/*
+ * Cache-first dimensions lookup. Critical performance path: called during
+ * edge rendering, minimap rendering and bbox computation. Calling
+ * `offsetWidth` here triggers a synchronous layout reflow, so we ONLY do
+ * that on a cache miss. The cache is invalidated automatically by the
+ * ResizeObserver wired in `observeNodeResize` below whenever node content
+ * changes (e.g. streaming response grows the model card).
+ */
 function getNodeDimensions(node) {
+  if (node.cachedWidth && node.cachedHeight) {
+    return { width: node.cachedWidth, height: node.cachedHeight };
+  }
+  /* Cache miss — read from DOM (causes a single reflow). */
   const w = node.root.offsetWidth;
   const h = node.root.offsetHeight;
   if (w > 0 && h > 0) {
@@ -2115,6 +2587,41 @@ function getNodeDimensions(node) {
     width: node.cachedWidth || defaultWidth,
     height: node.cachedHeight || defaultHeight,
   };
+}
+
+/* Single global ResizeObserver shared by every node. Browser-batched and
+   asynchronous, so it never blocks the main thread. */
+const _nodeResizeObserver = (typeof ResizeObserver !== 'undefined')
+  ? new ResizeObserver((entries) => {
+      let dirty = false;
+      for (const entry of entries) {
+        const nodeId = entry.target.dataset.nodeId;
+        if (!nodeId) continue;
+        const node = nodes.get(nodeId);
+        if (!node) continue;
+        const rect = entry.contentRect;
+        /* Only mark dirty if size actually changed by more than 1px */
+        if (
+          Math.abs((node.cachedWidth || 0) - rect.width) > 1 ||
+          Math.abs((node.cachedHeight || 0) - rect.height) > 1
+        ) {
+          node.cachedWidth = rect.width;
+          node.cachedHeight = rect.height;
+          dirty = true;
+        }
+      }
+      if (dirty) {
+        scheduleRenderEdges();
+        scheduleRenderMinimap();
+      }
+    })
+  : null;
+
+function observeNodeResize(root, nodeId) {
+  if (!_nodeResizeObserver || !root) return;
+  /* Tag the root with its nodeId so the observer callback can map back. */
+  if (!root.dataset.nodeId) root.dataset.nodeId = nodeId;
+  _nodeResizeObserver.observe(root);
 }
 
 function getAnchorPoint(node, edgeType, isSource) {
@@ -2144,6 +2651,209 @@ function buildBezierPath(start, end) {
   return `M ${start.x} ${start.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${end.x} ${end.y}`;
 }
 
+/* ─── Smart alignment guides (B3) ───────────────────────────────────────────
+ * During drag, detect when the dragged group's edges/centers come close to
+ * other nodes' edges/centers and:
+ *   1. Snap the drag delta so they line up exactly
+ *   2. Render red dashed guide lines to communicate the snap
+ *
+ * Only checks against the K nearest non-dragging nodes for performance.
+ * Snap threshold scales with zoom so it feels constant in screen space.
+ */
+const SNAP_THRESHOLD_PX = 8;        // screen-space pixels
+const SNAP_NEIGHBOR_LIMIT = 12;     // only check K nearest non-dragging nodes
+
+function clearAlignGuides() {
+  if (alignGuideLayerEl) alignGuideLayerEl.innerHTML = '';
+}
+
+/* Returns { snapDx, snapDy, lines } where lines is an array of
+   { x1, y1, x2, y2 } in world coordinates. */
+function computeAlignGuides(draggedBbox, draggedIds) {
+  const threshold = SNAP_THRESHOLD_PX / state.scale;
+
+  /* Collect candidate (non-dragging) nodes' bboxes */
+  const candidates = [];
+  for (const node of nodes.values()) {
+    if (draggedIds.has(node.nodeId)) continue;
+    const dim = getNodeDimensions(node);
+    candidates.push({
+      x1: node.x,
+      y1: node.y,
+      x2: node.x + dim.width,
+      y2: node.y + dim.height,
+      cx: node.x + dim.width / 2,
+      cy: node.y + dim.height / 2,
+    });
+  }
+  if (!candidates.length) return { snapDx: 0, snapDy: 0, lines: [] };
+
+  /* Sort by distance to dragged center, take K nearest */
+  const dCx = (draggedBbox.x1 + draggedBbox.x2) / 2;
+  const dCy = (draggedBbox.y1 + draggedBbox.y2) / 2;
+  candidates.sort((a, b) => {
+    const da = (a.cx - dCx) ** 2 + (a.cy - dCy) ** 2;
+    const db = (b.cx - dCx) ** 2 + (b.cy - dCy) ** 2;
+    return da - db;
+  });
+  const neighbors = candidates.slice(0, SNAP_NEIGHBOR_LIMIT);
+
+  /* For each axis, find the smallest delta that snaps the dragged group to a
+     neighbor's left/center/right (X axis) or top/center/bottom (Y axis). */
+  let bestSnapDx = 0;
+  let bestSnapDxDist = Infinity;
+  let bestSnapDy = 0;
+  let bestSnapDyDist = Infinity;
+  const lines = [];
+  const matchedX = []; // candidates whose X-line matched
+  const matchedY = []; // candidates whose Y-line matched
+
+  for (const n of neighbors) {
+    /* X axis: try matching left, center, right of dragged to left/center/right of n */
+    const xPairs = [
+      [draggedBbox.x1, n.x1, 'left'],
+      [(draggedBbox.x1 + draggedBbox.x2) / 2, n.cx, 'center'],
+      [draggedBbox.x2, n.x2, 'right'],
+      [draggedBbox.x1, n.x2, 'leftRight'], // dragged left ↔ neighbor right
+      [draggedBbox.x2, n.x1, 'rightLeft'],
+    ];
+    for (const [drag, nei, kind] of xPairs) {
+      const delta = nei - drag;
+      const dist = Math.abs(delta);
+      if (dist < threshold && dist < Math.abs(bestSnapDxDist) + 0.01) {
+        if (dist < Math.abs(bestSnapDxDist) - 0.01) {
+          bestSnapDx = delta;
+          bestSnapDxDist = delta;
+          matchedX.length = 0;
+        }
+        matchedX.push({ n, kind, x: nei });
+      }
+    }
+
+    /* Y axis: same idea */
+    const yPairs = [
+      [draggedBbox.y1, n.y1, 'top'],
+      [(draggedBbox.y1 + draggedBbox.y2) / 2, n.cy, 'center'],
+      [draggedBbox.y2, n.y2, 'bottom'],
+      [draggedBbox.y1, n.y2, 'topBot'],
+      [draggedBbox.y2, n.y1, 'botTop'],
+    ];
+    for (const [drag, nei, kind] of yPairs) {
+      const delta = nei - drag;
+      const dist = Math.abs(delta);
+      if (dist < threshold && dist < Math.abs(bestSnapDyDist) + 0.01) {
+        if (dist < Math.abs(bestSnapDyDist) - 0.01) {
+          bestSnapDy = delta;
+          bestSnapDyDist = delta;
+          matchedY.length = 0;
+        }
+        matchedY.push({ n, kind, y: nei });
+      }
+    }
+  }
+
+  /* Build guide lines for the snapped axes */
+  const snapDx = Math.abs(bestSnapDxDist) === Infinity ? 0 : bestSnapDx;
+  const snapDy = Math.abs(bestSnapDyDist) === Infinity ? 0 : bestSnapDy;
+
+  if (snapDx !== 0 || matchedX.length > 0) {
+    /* Draw a vertical line at the snapped X, from the topmost to the bottommost
+       of (dragged + matched neighbors). */
+    for (const m of matchedX) {
+      const lineX = m.x;
+      const minY = Math.min(draggedBbox.y1 + snapDy, m.n.y1) - 12;
+      const maxY = Math.max(draggedBbox.y2 + snapDy, m.n.y2) + 12;
+      lines.push({ kind: 'v', x: lineX, y1: minY, y2: maxY });
+    }
+  }
+  if (snapDy !== 0 || matchedY.length > 0) {
+    for (const m of matchedY) {
+      const lineY = m.y;
+      const minX = Math.min(draggedBbox.x1 + snapDx, m.n.x1) - 12;
+      const maxX = Math.max(draggedBbox.x2 + snapDx, m.n.x2) + 12;
+      lines.push({ kind: 'h', y: lineY, x1: minX, x2: maxX });
+    }
+  }
+
+  return { snapDx, snapDy, lines };
+}
+
+function renderAlignGuides(lines) {
+  if (!alignGuideLayerEl) return;
+  if (!lines || !lines.length) {
+    alignGuideLayerEl.innerHTML = '';
+    return;
+  }
+  const parts = [];
+  for (const ln of lines) {
+    if (ln.kind === 'v') {
+      parts.push(`<line class="align-guide-line" x1="${ln.x}" y1="${ln.y1}" x2="${ln.x}" y2="${ln.y2}"/>`);
+      parts.push(`<rect class="align-guide-tick" x="${ln.x - 2}" y="${ln.y1 - 2}" width="4" height="4"/>`);
+      parts.push(`<rect class="align-guide-tick" x="${ln.x - 2}" y="${ln.y2 - 2}" width="4" height="4"/>`);
+    } else {
+      parts.push(`<line class="align-guide-line" x1="${ln.x1}" y1="${ln.y}" x2="${ln.x2}" y2="${ln.y}"/>`);
+      parts.push(`<rect class="align-guide-tick" x="${ln.x1 - 2}" y="${ln.y - 2}" width="4" height="4"/>`);
+      parts.push(`<rect class="align-guide-tick" x="${ln.x2 - 2}" y="${ln.y - 2}" width="4" height="4"/>`);
+    }
+  }
+  alignGuideLayerEl.innerHTML = parts.join('');
+}
+
+/* ─── Cluster visual frames (B2) ────────────────────────────────────────────
+ * Renders one rounded-rectangle frame per cluster, sitting between the edge
+ * layer and the node layer. The frame's size mirrors `cluster.bbox` (which is
+ * always kept fresh by `updateClusterBounds`). A small label at the top shows
+ * the user's question (first 30 chars), giving the cluster a visible identity.
+ *
+ * Highlight state ('.active') turns on whenever any node in the cluster is
+ * part of the current selection.
+ *
+ * Performance: 1 div per cluster, no event listeners (pointer-events:none).
+ * Re-rendered via rAF coalescing whenever bbox / selection / nodes change.
+ */
+const FRAME_PADDING = 24;
+
+function renderClusterFrames() {
+  if (!clusterFrameLayerEl) return;
+  if (!requestClusters.size) {
+    clusterFrameLayerEl.innerHTML = '';
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const cluster of requestClusters.values()) {
+    if (!cluster.bbox) continue;
+    const { x, y, width, height } = cluster.bbox;
+    const frame = document.createElement('div');
+    frame.className = 'cluster-frame';
+    frame.dataset.requestId = cluster.requestId;
+    frame.style.left = `${x - FRAME_PADDING}px`;
+    frame.style.top = `${y - FRAME_PADDING}px`;
+    frame.style.width = `${width + FRAME_PADDING * 2}px`;
+    frame.style.height = `${height + FRAME_PADDING * 2}px`;
+
+    /* Label = first ~30 chars of the user's question */
+    const userNode = nodes.get(cluster.userNodeId);
+    const userText = userNode?.root?.querySelector('.user-message')?.textContent?.trim() || '';
+    if (userText) {
+      const label = document.createElement('div');
+      label.className = 'cluster-frame-label';
+      label.textContent = userText.length > 30 ? userText.slice(0, 30) + '…' : userText;
+      frame.appendChild(label);
+    }
+
+    /* Highlight when any node in the cluster is selected */
+    const isActive =
+      (cluster.userNodeId && selectedNodeIds.has(cluster.userNodeId)) ||
+      (Array.isArray(cluster.modelNodeIds) && cluster.modelNodeIds.some((id) => selectedNodeIds.has(id))) ||
+      (cluster.conclusionNodeId && selectedNodeIds.has(cluster.conclusionNodeId));
+    if (isActive) frame.classList.add('active');
+
+    frag.appendChild(frame);
+  }
+  clusterFrameLayerEl.innerHTML = '';
+  clusterFrameLayerEl.appendChild(frag);
+}
+
 function renderMinimap() {
   const allNodes = Array.from(nodes.values());
   if (!allNodes.length) {
@@ -2152,18 +2862,27 @@ function renderMinimap() {
     return;
   }
 
+  /* ── PHASE 1: read everything first (zero DOM writes) ──
+     Pre-collecting dimensions in a single pass — combined with the cache-first
+     getNodeDimensions — ensures the DOM is read at most once per node and
+     never interleaved with writes. */
+  const dimensions = new Array(allNodes.length);
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
-
-  for (const node of allNodes) {
-    const { width, height } = getNodeDimensions(node);
+  for (let i = 0; i < allNodes.length; i += 1) {
+    const node = allNodes[i];
+    const dim = getNodeDimensions(node);
+    dimensions[i] = dim;
     minX = Math.min(minX, node.x);
     minY = Math.min(minY, node.y);
-    maxX = Math.max(maxX, node.x + width);
-    maxY = Math.max(maxY, node.y + height);
+    maxX = Math.max(maxX, node.x + dim.width);
+    maxY = Math.max(maxY, node.y + dim.height);
   }
+  const contentWidth = minimapContentEl.clientWidth;
+  const contentHeight = minimapContentEl.clientHeight;
+  const viewportRect = viewportEl.getBoundingClientRect();
 
   const padding = 80;
   minX -= padding;
@@ -2173,29 +2892,32 @@ function renderMinimap() {
 
   const worldWidth = Math.max(1, maxX - minX);
   const worldHeight = Math.max(1, maxY - minY);
-  const contentWidth = minimapContentEl.clientWidth;
-  const contentHeight = minimapContentEl.clientHeight;
   const scale = Math.min(contentWidth / worldWidth, contentHeight / worldHeight);
   const offsetX = (contentWidth - worldWidth * scale) / 2;
   const offsetY = (contentHeight - worldHeight * scale) / 2;
 
-  minimapNodesEl.innerHTML = '';
-  for (const node of allNodes) {
-    const { width, height } = getNodeDimensions(node);
+  /* ── PHASE 2: write everything in one batch using DocumentFragment ──
+     Building outside the live DOM avoids per-append layout invalidations. */
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < allNodes.length; i += 1) {
+    const node = allNodes[i];
+    const { width, height } = dimensions[i];
     const left = offsetX + (node.x - minX) * scale;
     const top = offsetY + (node.y - minY) * scale;
     const active = node.nodeId === (hoverNodeId || selectedNodeId);
-    const running = Boolean(getCluster(node.requestId)?.isRunning || getCluster(node.requestId)?.isCancelling);
+    const cluster = getCluster(node.requestId);
+    const running = Boolean(cluster?.isRunning || cluster?.isCancelling);
     const el = document.createElement('div');
     el.className = `minimap-node ${node.type}${active ? ' active' : ''}${running ? ' running' : ''}`;
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
     el.style.width = `${Math.max(8, width * scale)}px`;
     el.style.height = `${Math.max(6, height * scale)}px`;
-    minimapNodesEl.appendChild(el);
+    frag.appendChild(el);
   }
+  minimapNodesEl.innerHTML = '';
+  minimapNodesEl.appendChild(frag);
 
-  const viewportRect = viewportEl.getBoundingClientRect();
   const visibleLeft = (-state.offsetX) / state.scale;
   const visibleTop = (-state.offsetY) / state.scale;
   const visibleWidth = viewportRect.width / state.scale;
@@ -2217,12 +2939,19 @@ function renderMinimap() {
   };
 }
 
-function centerViewportOn(worldX, worldY) {
+function centerViewportOn(worldX, worldY, { animate = true } = {}) {
   const rect = viewportEl.getBoundingClientRect();
-  state.offsetX = rect.width / 2 - worldX * state.scale;
-  state.offsetY = rect.height / 2 - worldY * state.scale;
-  applyTransform();
-  renderMinimap();
+  const targetX = rect.width / 2 - worldX * state.scale;
+  const targetY = rect.height / 2 - worldY * state.scale;
+  if (animate) {
+    /* B1: smooth pan to target. */
+    animateViewTo(state.scale, targetX, targetY);
+  } else {
+    state.offsetX = targetX;
+    state.offsetY = targetY;
+    applyTransform();
+    renderMinimap();
+  }
 }
 
 function clearCanvas() {
@@ -2245,11 +2974,16 @@ function clearCanvas() {
 
   stageEl.innerHTML = '';
   edgeLayerEl.innerHTML = '';
+  if (clusterFrameLayerEl) clusterFrameLayerEl.innerHTML = '';
   requestClusters.clear();
   nodes.clear();
   edges.clear();
   pendingSearchEvents.clear();
+  nodeIdToClusterId.clear();
   selectedNodeIds.clear();
+  /* C1: history is invalid after a full canvas wipe */
+  historyStack.length = 0;
+  historyIndex = -1;
   clearSelectionSummary();
   state.selectionSource = 'none';
   clusterCount = 0;
@@ -2275,44 +3009,141 @@ function bindNodeDrag(root, nodeId, requestId) {
     if (event.button !== 0) return;
     event.stopPropagation();
 
+    /* B1: any user drag cancels in-flight view animation */
+    cancelViewAnimation();
+
     const node = nodes.get(nodeId);
     if (!node) return;
+
+    /* Decide drag-set: if clicked node is part of a multi-selection, drag the
+       whole selection together; otherwise drag only this node. */
+    let dragIds;
+    if (selectedNodeIds.has(nodeId) && selectedNodeIds.size > 1) {
+      dragIds = Array.from(selectedNodeIds);
+    } else {
+      dragIds = [nodeId];
+    }
+
+    /* Snapshot starting positions of every node to be dragged, plus the set
+       of clusters that will need to be saved on drag-end. */
+    state.dragOrigins = new Map();
+    state.dragClusterIds = new Set();
+    for (const id of dragIds) {
+      const n = nodes.get(id);
+      if (!n) continue;
+      state.dragOrigins.set(id, { x: n.x, y: n.y });
+      n.root.classList.add('dragging');
+      const rid = findClusterIdForNode(id);
+      if (rid) state.dragClusterIds.add(rid);
+    }
 
     state.draggingNodeId = nodeId;
     state.dragStartX = event.clientX;
     state.dragStartY = event.clientY;
-    state.originNodeX = node.x;
-    state.originNodeY = node.y;
-    root.classList.add('dragging');
     handle.setPointerCapture(event.pointerId);
   });
 
   handle.addEventListener('pointermove', (event) => {
     if (state.draggingNodeId !== nodeId) return;
-    const node = nodes.get(nodeId);
-    if (!node) return;
+    if (!state.dragOrigins) return;
 
-    const dx = (event.clientX - state.dragStartX) / state.scale;
-    const dy = (event.clientY - state.dragStartY) / state.scale;
-    node.x = state.originNodeX + dx;
-    node.y = state.originNodeY + dy;
-    node.root.style.left = `${node.x}px`;
-    node.root.style.top = `${node.y}px`;
-    updateClusterBounds(requestId);
+    let dx = (event.clientX - state.dragStartX) / state.scale;
+    let dy = (event.clientY - state.dragStartY) / state.scale;
+
+    /* B3: compute the bbox the dragged group would occupy at this delta,
+       then ask the snap helper for an axis-wise correction. */
+    let snapDx = 0;
+    let snapDy = 0;
+    let snapLines = [];
+    if (state.dragOrigins.size > 0) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const [id, origin] of state.dragOrigins) {
+        const n = nodes.get(id);
+        if (!n) continue;
+        const dim = getNodeDimensions(n);
+        const x = origin.x + dx;
+        const y = origin.y + dy;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x + dim.width);
+        maxY = Math.max(maxY, y + dim.height);
+      }
+      if (Number.isFinite(minX)) {
+        const draggedSet = new Set(state.dragOrigins.keys());
+        const result = computeAlignGuides(
+          { x1: minX, y1: minY, x2: maxX, y2: maxY },
+          draggedSet,
+        );
+        snapDx = result.snapDx;
+        snapDy = result.snapDy;
+        snapLines = result.lines;
+      }
+    }
+    dx += snapDx;
+    dy += snapDy;
+    renderAlignGuides(snapLines);
+
+    /* Apply the same delta to every node in the drag-set */
+    for (const [id, origin] of state.dragOrigins) {
+      const n = nodes.get(id);
+      if (!n) continue;
+      n.x = origin.x + dx;
+      n.y = origin.y + dy;
+      n.root.style.left = `${n.x}px`;
+      n.root.style.top = `${n.y}px`;
+    }
+    /* Refresh bbox for every affected cluster */
+    if (state.dragClusterIds) {
+      for (const rid of state.dragClusterIds) updateClusterBounds(rid);
+    }
     scheduleRenderEdges();
     scheduleRenderMinimap();
-    updateSelectionActions();
+    scheduleSelectionActionsRefresh();
   });
 
   function stopDrag(event) {
     if (state.draggingNodeId !== nodeId) return;
     handle.releasePointerCapture?.(event.pointerId);
+
+    /* C1: capture move history if any node actually moved by >1px */
+    let moveOps = [];
+    if (state.dragOrigins) {
+      for (const [id, origin] of state.dragOrigins) {
+        const n = nodes.get(id);
+        if (!n) continue;
+        const dx = n.x - origin.x;
+        const dy = n.y - origin.y;
+        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+          moveOps.push({ nodeId: id, fromX: origin.x, fromY: origin.y, toX: n.x, toY: n.y });
+        }
+      }
+    }
+    if (moveOps.length) {
+      pushHistory({ type: 'move', ops: moveOps });
+    }
+
+    /* Strip dragging class from every dragged node */
+    if (state.dragOrigins) {
+      for (const id of state.dragOrigins.keys()) {
+        nodes.get(id)?.root.classList.remove('dragging');
+      }
+    }
+    /* Persist position for every affected cluster (each has its own debounce timer) */
+    if (state.dragClusterIds) {
+      for (const rid of state.dragClusterIds) {
+        updateClusterBounds(rid);
+        schedulePositionSave(rid);
+      }
+    }
+
     state.draggingNodeId = null;
-    root.classList.remove('dragging');
-    updateClusterBounds(requestId);
+    state.dragOrigins = null;
+    state.dragClusterIds = null;
+    /* B3: clear alignment guides when drag ends */
+    clearAlignGuides();
     scheduleRenderEdges();
     scheduleRenderMinimap();
-    schedulePositionSave(requestId);
+    scheduleSelectionActionsRefresh();
   }
 
   handle.addEventListener('pointerup', stopDrag);
@@ -2348,46 +3179,99 @@ function updateClusterBounds(requestId) {
     };
     cluster.baseX = minX + cluster.bbox.width / 2;
     cluster.baseY = minY;
+    /* B2: any bbox change → frame must redraw. rAF-coalesced. */
+    scheduleRenderClusterFrames();
   }
 }
+
+/* Tracks whether the spacebar is currently held down. While true, dragging
+   the empty canvas pans instead of triggering box-select. Updated by the
+   global keyboard handler at the bottom of the file. */
+let _spaceHeld = false;
+
+/* Marquee (box-select) state. Active during drag-from-empty-canvas. */
+let _marqueeEl = null;
+let _marqueeStart = null; // { worldX, worldY, clientX, clientY, additive }
 
 function bindCanvasPan() {
   window.addEventListener('blur', () => {
     state.panning = false;
     viewportEl.classList.remove('panning');
+    _spaceHeld = false;
+    viewportEl.classList.remove('space-held');
+    cancelMarquee();
   });
 
   viewportEl.addEventListener('pointerdown', (event) => {
     if (event.target.closest('.node, .minimap, .selection-actions, .needs-setup-banner')) return;
-    if (event.button !== 0) return;
-
-    state.panning = true;
-    state.panStartX = event.clientX;
-    state.panStartY = event.clientY;
-    state.originOffsetX = state.offsetX;
-    state.originOffsetY = state.offsetY;
-    viewportEl.classList.add('panning');
-    viewportEl.setPointerCapture(event.pointerId);
+    if (event.button !== 0 && event.button !== 1) return; // left or middle
+    /* B1: any user-initiated viewport interaction cancels in-flight animation */
+    cancelViewAnimation();
+    /* Decide mode:
+       - Middle mouse button → pan
+       - Space held → pan
+       - Otherwise → box select */
+    const wantPan = event.button === 1 || _spaceHeld;
+    if (wantPan) {
+      state.panning = true;
+      state.panStartX = event.clientX;
+      state.panStartY = event.clientY;
+      state.originOffsetX = state.offsetX;
+      state.originOffsetY = state.offsetY;
+      viewportEl.classList.add('panning');
+      viewportEl.setPointerCapture(event.pointerId);
+    } else {
+      /* Start marquee selection */
+      const rect = viewportEl.getBoundingClientRect();
+      const worldX = (event.clientX - rect.left - state.offsetX) / state.scale;
+      const worldY = (event.clientY - rect.top - state.offsetY) / state.scale;
+      _marqueeStart = {
+        worldX,
+        worldY,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        additive: event.shiftKey,
+        baseSelection: event.shiftKey ? new Set(selectedNodeIds) : null,
+      };
+      state.panning = false;
+      viewportEl.setPointerCapture(event.pointerId);
+    }
   });
 
   viewportEl.addEventListener('pointermove', (event) => {
-    if (!state.panning) return;
-    state.offsetX = state.originOffsetX + (event.clientX - state.panStartX);
-    state.offsetY = state.originOffsetY + (event.clientY - state.panStartY);
-    applyTransform();
-    scheduleRenderMinimap();
+    if (state.panning) {
+      state.offsetX = state.originOffsetX + (event.clientX - state.panStartX);
+      state.offsetY = state.originOffsetY + (event.clientY - state.panStartY);
+      /* Coalesce multiple pointermove events into one rAF callback */
+      scheduleApplyTransform();
+      scheduleRenderMinimap();
+      return;
+    }
+    if (_marqueeStart) {
+      updateMarquee(event);
+    }
   });
 
   function stopPan(event) {
-    if (!state.panning) return;
-    const moved = Math.abs(event.clientX - state.panStartX) > 4 ||
-                  Math.abs(event.clientY - state.panStartY) > 4;
-    state.panning = false;
-    viewportEl.classList.remove('panning');
-    try { viewportEl.releasePointerCapture(event.pointerId); } catch (_) {}
+    /* End pan mode */
+    if (state.panning) {
+      const moved = Math.abs(event.clientX - state.panStartX) > 4 ||
+                    Math.abs(event.clientY - state.panStartY) > 4;
+      state.panning = false;
+      viewportEl.classList.remove('panning');
+      try { viewportEl.releasePointerCapture(event.pointerId); } catch (_) {}
 
-    if (!moved && !event.target.closest('.node')) {
-      clearSelection();
+      if (!moved && !event.target.closest('.node')) {
+        clearSelection();
+      }
+      return;
+    }
+    /* End marquee mode */
+    if (_marqueeStart) {
+      const moved = Math.abs(event.clientX - _marqueeStart.clientX) > 4 ||
+                    Math.abs(event.clientY - _marqueeStart.clientY) > 4;
+      try { viewportEl.releasePointerCapture(event.pointerId); } catch (_) {}
+      finishMarquee(moved);
     }
   }
 
@@ -2398,21 +3282,413 @@ function bindCanvasPan() {
     'wheel',
     (event) => {
       event.preventDefault();
+      /* B1: scrolling/zooming cancels animation immediately */
+      if (_viewAnim) cancelViewAnimation();
       if (event.ctrlKey || event.metaKey) {
-        // Pinch-to-zoom (trackpad) or Ctrl+scroll
-        const factor = event.deltaY < 0 ? 1.02 : 0.98;
+        // Pinch-to-zoom (trackpad) or Ctrl+scroll — gentler step + rAF coalesce
+        const factor = event.deltaY < 0 ? 1.012 : 0.988;
         zoomAtPoint(factor, event.clientX, event.clientY);
       } else {
-        // Two-finger scroll = pan
+        // Two-finger scroll = pan — coalesce via rAF
         state.offsetX -= event.deltaX;
         state.offsetY -= event.deltaY;
-        applyTransform();
+        scheduleApplyTransform();
         scheduleRenderMinimap();
       }
     },
     { passive: false }
   );
 }
+
+/* ─── Marquee (box-select) helpers ─────────────────────────────────────── */
+
+function ensureMarqueeEl() {
+  if (_marqueeEl) return _marqueeEl;
+  _marqueeEl = document.createElement('div');
+  _marqueeEl.className = 'marquee';
+  viewportEl.appendChild(_marqueeEl);
+  return _marqueeEl;
+}
+
+function cancelMarquee() {
+  if (_marqueeEl) {
+    _marqueeEl.remove();
+    _marqueeEl = null;
+  }
+  _marqueeStart = null;
+}
+
+function updateMarquee(event) {
+  const start = _marqueeStart;
+  if (!start) return;
+  const rect = viewportEl.getBoundingClientRect();
+  const x1 = Math.min(start.clientX, event.clientX) - rect.left;
+  const y1 = Math.min(start.clientY, event.clientY) - rect.top;
+  const x2 = Math.max(start.clientX, event.clientX) - rect.left;
+  const y2 = Math.max(start.clientY, event.clientY) - rect.top;
+  const el = ensureMarqueeEl();
+  el.style.left = `${x1}px`;
+  el.style.top = `${y1}px`;
+  el.style.width = `${x2 - x1}px`;
+  el.style.height = `${y2 - y1}px`;
+
+  /* Recompute selection live so the user sees what they're about to grab. */
+  const worldX2 = (event.clientX - rect.left - state.offsetX) / state.scale;
+  const worldY2 = (event.clientY - rect.top - state.offsetY) / state.scale;
+  const minX = Math.min(start.worldX, worldX2);
+  const minY = Math.min(start.worldY, worldY2);
+  const maxX = Math.max(start.worldX, worldX2);
+  const maxY = Math.max(start.worldY, worldY2);
+
+  const inside = new Set();
+  for (const node of nodes.values()) {
+    const dim = getNodeDimensions(node);
+    /* Use intersection test (touches at all) — generous matches feel better
+       than strict containment for fast-flick selections. */
+    if (
+      node.x + dim.width >= minX &&
+      node.x <= maxX &&
+      node.y + dim.height >= minY &&
+      node.y <= maxY
+    ) {
+      inside.add(node.nodeId);
+    }
+  }
+
+  selectedNodeIds.clear();
+  if (start.additive && start.baseSelection) {
+    for (const id of start.baseSelection) selectedNodeIds.add(id);
+  }
+  for (const id of inside) selectedNodeIds.add(id);
+  selectedNodeId = selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null;
+  state.selectionSource = 'marquee';
+  renderSelectionState();
+  updateComposerHint();
+}
+
+function finishMarquee(moved) {
+  if (!_marqueeStart) return;
+  const additive = _marqueeStart.additive;
+  cancelMarquee();
+  if (!moved) {
+    /* It was a click, not a drag — clear selection (matching old behavior),
+       unless the user was holding shift to add to selection. */
+    if (!additive) clearSelection();
+  }
+  /* When moved=true, selection state was already live-updated by updateMarquee(). */
+}
+
+/* ─── Right-click context menu (C3) ────────────────────────────────────────── */
+const contextMenuEl = document.getElementById('contextMenu');
+
+function hideContextMenu() {
+  if (contextMenuEl) contextMenuEl.classList.add('hidden');
+}
+
+function showContextMenu(clientX, clientY, items) {
+  if (!contextMenuEl) return;
+  /* Build the menu DOM */
+  const frag = document.createDocumentFragment();
+  for (const item of items) {
+    if (item.separator) {
+      const sep = document.createElement('div');
+      sep.className = 'context-menu-separator';
+      frag.appendChild(sep);
+      continue;
+    }
+    const el = document.createElement('div');
+    el.className = `context-menu-item${item.danger ? ' danger' : ''}`;
+    el.setAttribute('role', 'menuitem');
+    if (item.disabled) el.setAttribute('aria-disabled', 'true');
+    const label = document.createElement('span');
+    label.textContent = item.label;
+    el.appendChild(label);
+    if (item.shortcut) {
+      const sc = document.createElement('span');
+      sc.className = 'ctx-shortcut';
+      sc.textContent = item.shortcut;
+      el.appendChild(sc);
+    }
+    if (!item.disabled && item.action) {
+      el.addEventListener('click', () => {
+        hideContextMenu();
+        try { item.action(); } catch (e) { console.error('[ctx menu]', e); }
+      });
+    }
+    frag.appendChild(el);
+  }
+  contextMenuEl.innerHTML = '';
+  contextMenuEl.appendChild(frag);
+  contextMenuEl.classList.remove('hidden');
+  /* Position with viewport bounds clamping */
+  const rect = viewportEl.getBoundingClientRect();
+  const menuW = contextMenuEl.offsetWidth || 220;
+  const menuH = contextMenuEl.offsetHeight || 200;
+  const left = Math.min(clientX - rect.left, rect.width - menuW - 8);
+  const top = Math.min(clientY - rect.top, rect.height - menuH - 8);
+  contextMenuEl.style.left = `${Math.max(8, left)}px`;
+  contextMenuEl.style.top = `${Math.max(8, top)}px`;
+}
+
+function buildContextMenuItems(targetNodeId) {
+  const items = [];
+  const targetNode = targetNodeId ? nodes.get(targetNodeId) : null;
+  const isModel = targetNode?.type === 'model';
+  const isMulti = selectedNodeIds.size > 1;
+  const hasSelection = selectedNodeIds.size > 0;
+
+  /* Focus current target */
+  if (targetNode) {
+    items.push({
+      label: '聚焦此卡片',
+      shortcut: 'F',
+      action: () => focusNode(targetNodeId),
+    });
+  } else if (selectedNodeIds.size) {
+    items.push({
+      label: '聚焦选中',
+      shortcut: 'F',
+      action: () => focusSelection(),
+    });
+  }
+  items.push({
+    label: '适配全部到视口',
+    shortcut: '⌘0',
+    action: () => fitAll(),
+  });
+
+  /* Selection actions */
+  if (targetNode || hasSelection) {
+    items.push({ separator: true });
+    if (isModel && !isMulti) {
+      items.push({
+        label: '建立分支',
+        action: () => openBranchComposer(targetNode),
+      });
+    }
+    items.push({
+      label: '清除选择',
+      shortcut: 'Esc',
+      disabled: !hasSelection,
+      action: () => clearSelection(),
+    });
+  }
+
+  /* Edit ops */
+  items.push({ separator: true });
+  items.push({
+    label: '撤销',
+    shortcut: '⌘Z',
+    disabled: historyIndex < 0,
+    action: () => undo(),
+  });
+  items.push({
+    label: '重做',
+    shortcut: '⌘⇧Z',
+    disabled: historyIndex >= historyStack.length - 1,
+    action: () => redo(),
+  });
+
+  /* Destructive */
+  if (hasSelection || targetNode) {
+    items.push({ separator: true });
+    items.push({
+      label: '隐藏选中（可撤销）',
+      shortcut: 'Del',
+      danger: true,
+      disabled: !hasSelection && !targetNode,
+      action: () => {
+        if (!selectedNodeIds.size && targetNodeId) {
+          selectedNodeIds.add(targetNodeId);
+        }
+        deleteSelected();
+      },
+    });
+  }
+
+  return items;
+}
+
+/* Listen for contextmenu on the viewport */
+viewportEl?.addEventListener('contextmenu', (event) => {
+  /* Skip if right-clicking on UI controls (they may have their own menus) */
+  if (event.target.closest('button, input, textarea, select, .minimap, .selection-actions')) {
+    return;
+  }
+  event.preventDefault();
+  /* Determine target: if right-click on a node, that's the target; if user
+     had a selection that includes the clicked node, use that selection. */
+  const nodeEl = event.target.closest('.node');
+  let targetNodeId = nodeEl?.dataset.nodeId || null;
+  /* If right-clicking a node not in selection, treat it as a fresh target */
+  if (targetNodeId && !selectedNodeIds.has(targetNodeId)) {
+    selectedNodeIds.clear();
+    selectedNodeIds.add(targetNodeId);
+    selectedNodeId = targetNodeId;
+    state.selectionSource = 'click';
+    renderSelectionState();
+  }
+  showContextMenu(event.clientX, event.clientY, buildContextMenuItems(targetNodeId));
+});
+
+/* Click anywhere else closes the menu */
+document.addEventListener('mousedown', (event) => {
+  if (!contextMenuEl || contextMenuEl.classList.contains('hidden')) return;
+  if (event.target.closest('.context-menu')) return;
+  hideContextMenu();
+});
+
+/* ─── Global search overlay (E1) ──────────────────────────────────────────── */
+const searchOverlayEl = document.getElementById('searchOverlay');
+const searchInputEl = document.getElementById('searchInput');
+const searchResultsEl = document.getElementById('searchResults');
+let _searchResults = [];
+let _searchActiveIndex = 0;
+
+function openSearch() {
+  if (!searchOverlayEl) return;
+  searchOverlayEl.classList.remove('hidden');
+  searchInputEl.value = '';
+  _searchResults = [];
+  _searchActiveIndex = 0;
+  renderSearchResults();
+  /* Focus after a microtask so the keydown that opened it doesn't echo */
+  setTimeout(() => searchInputEl?.focus(), 0);
+}
+
+function closeSearch() {
+  if (!searchOverlayEl) return;
+  searchOverlayEl.classList.add('hidden');
+  searchInputEl.value = '';
+  _searchResults = [];
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlightMatch(text, query) {
+  if (!query) return escapeHtml(text);
+  const re = new RegExp(`(${escapeRegex(query)})`, 'ig');
+  return escapeHtml(text).replace(re, '<mark>$1</mark>');
+}
+
+function performSearch(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    _searchResults = [];
+    renderSearchResults();
+    return;
+  }
+  const matches = [];
+  for (const cluster of requestClusters.values()) {
+    /* Search in user message text */
+    const userNode = nodes.get(cluster.userNodeId);
+    const userText = userNode?.root?.querySelector('.user-message')?.textContent || '';
+    /* Also search in model responses (concatenate all rounds) */
+    let modelText = '';
+    for (const mid of (cluster.modelNodeIds || [])) {
+      const m = nodes.get(mid);
+      if (!m?.turns) continue;
+      for (const turn of m.turns.values()) {
+        modelText += ' ' + (turn.raw || '');
+      }
+    }
+    const haystack = (userText + ' ' + modelText).toLowerCase();
+    if (haystack.includes(q)) {
+      matches.push({
+        requestId: cluster.requestId,
+        title: userText || `(对话 ${cluster.requestId.slice(0, 8)})`,
+        meta: `${cluster.modelNodeIds?.length || 0} 个模型 · ${cluster.kind === 'branch' ? '分支' : '主对话'}`,
+        score: userText.toLowerCase().includes(q) ? 2 : 1, // user-text matches rank higher
+      });
+    }
+  }
+  matches.sort((a, b) => b.score - a.score);
+  _searchResults = matches.slice(0, 30);
+  _searchActiveIndex = 0;
+  renderSearchResults(q);
+}
+
+function renderSearchResults(query = '') {
+  if (!searchResultsEl) return;
+  if (!_searchResults.length) {
+    searchResultsEl.innerHTML = '';
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  _searchResults.forEach((m, i) => {
+    const el = document.createElement('div');
+    el.className = `search-result${i === _searchActiveIndex ? ' active' : ''}`;
+    el.dataset.requestId = m.requestId;
+    el.innerHTML = `
+      <div class="search-result-title">${highlightMatch(m.title.slice(0, 80), query)}</div>
+      <div class="search-result-meta">${escapeHtml(m.meta)}</div>
+    `;
+    el.addEventListener('click', () => {
+      jumpToSearchResult(i);
+    });
+    frag.appendChild(el);
+  });
+  searchResultsEl.innerHTML = '';
+  searchResultsEl.appendChild(frag);
+}
+
+function jumpToSearchResult(index) {
+  const m = _searchResults[index];
+  if (!m) return;
+  closeSearch();
+  focusCluster(m.requestId);
+  /* Also select the user node so context is clear */
+  const cluster = requestClusters.get(m.requestId);
+  if (cluster?.userNodeId) {
+    selectedNodeIds.clear();
+    selectedNodeIds.add(cluster.userNodeId);
+    selectedNodeId = cluster.userNodeId;
+    state.selectionSource = 'keyboard';
+    renderSelectionState();
+  }
+}
+
+searchInputEl?.addEventListener('input', (event) => {
+  performSearch(event.target.value);
+});
+
+searchInputEl?.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeSearch();
+    return;
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    if (_searchResults.length) jumpToSearchResult(_searchActiveIndex);
+    return;
+  }
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    if (_searchResults.length) {
+      _searchActiveIndex = (_searchActiveIndex + 1) % _searchResults.length;
+      renderSearchResults(searchInputEl.value.trim());
+    }
+    return;
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (_searchResults.length) {
+      _searchActiveIndex = (_searchActiveIndex - 1 + _searchResults.length) % _searchResults.length;
+      renderSearchResults(searchInputEl.value.trim());
+    }
+    return;
+  }
+});
+
+/* Click on overlay backdrop closes search */
+searchOverlayEl?.addEventListener('mousedown', (event) => {
+  if (event.target === searchOverlayEl) {
+    closeSearch();
+  }
+});
 
 function zoomAtPoint(factor, clientX, clientY) {
   const rect = viewportEl.getBoundingClientRect();
@@ -2424,7 +3700,8 @@ function zoomAtPoint(factor, clientX, clientY) {
   state.scale = clamp(state.scale * factor, 0.2, 1.8);
   state.offsetX = pointerX - worldX * state.scale;
   state.offsetY = pointerY - worldY * state.scale;
-  applyTransform();
+  /* Coalesce rapid wheel events into a single rAF transform commit */
+  scheduleApplyTransform();
   scheduleRenderMinimap();
 }
 
@@ -2439,7 +3716,122 @@ function setZoom(nextScale) {
 function focusCluster(requestId) {
   const cluster = requestClusters.get(requestId);
   if (!cluster) return;
-  centerViewportOn(cluster.bbox.x + cluster.bbox.width / 2, cluster.bbox.y + cluster.bbox.height / 2);
+  /* B1: animated center on the cluster, keeping current zoom. */
+  const cx = cluster.bbox.x + cluster.bbox.width / 2;
+  const cy = cluster.bbox.y + cluster.bbox.height / 2;
+  const rect = viewportEl.getBoundingClientRect();
+  const targetX = rect.width / 2 - cx * state.scale;
+  const targetY = rect.height / 2 - cy * state.scale;
+  animateViewTo(state.scale, targetX, targetY);
+}
+
+/*
+ * Compute the union bbox of every existing cluster, then set scale + offset
+ * so the entire union fits inside the viewport with some padding. Used by
+ * Cmd/Ctrl+0 and (later) a "fit-all" toolbar button.
+ */
+function fitAll() {
+  refreshAllClusterBounds();
+  const allClusters = Array.from(requestClusters.values());
+  if (!allClusters.length) {
+    setZoom(DEFAULT_SCALE);
+    return;
+  }
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const cluster of allClusters) {
+    const bbox = cluster.bbox;
+    if (!bbox) continue;
+    minX = Math.min(minX, bbox.x);
+    minY = Math.min(minY, bbox.y);
+    maxX = Math.max(maxX, bbox.x + bbox.width);
+    maxY = Math.max(maxY, bbox.y + bbox.height);
+  }
+  if (!Number.isFinite(minX)) {
+    setZoom(DEFAULT_SCALE);
+    return;
+  }
+  const padding = 120;
+  const worldWidth = (maxX - minX) + padding * 2;
+  const worldHeight = (maxY - minY) + padding * 2;
+  const rect = viewportEl.getBoundingClientRect();
+  const scaleX = rect.width / worldWidth;
+  const scaleY = rect.height / worldHeight;
+  const targetScale = clamp(Math.min(scaleX, scaleY), 0.05, 1.8);
+  const centerWorldX = (minX + maxX) / 2;
+  const centerWorldY = (minY + maxY) / 2;
+  /* B1: animate to target view. */
+  animateViewTo(
+    targetScale,
+    rect.width / 2 - centerWorldX * targetScale,
+    rect.height / 2 - centerWorldY * targetScale,
+    320,
+  );
+}
+
+/*
+ * Zoom and center the viewport on a single node. If the current zoom level
+ * is small (<0.5) we bump it up to 0.7 so users can actually read the card.
+ * Otherwise we keep the current zoom and just recenter.
+ */
+function focusNode(nodeId) {
+  const node = nodes.get(nodeId);
+  if (!node) return;
+  const dim = getNodeDimensions(node);
+  const cx = node.x + dim.width / 2;
+  const cy = node.y + dim.height / 2;
+  const rect = viewportEl.getBoundingClientRect();
+  /* B1: bump zoom (if too small) and recenter, both via animation. */
+  const targetScale = state.scale < 0.5 ? 0.7 : state.scale;
+  animateViewTo(
+    targetScale,
+    rect.width / 2 - cx * targetScale,
+    rect.height / 2 - cy * targetScale,
+  );
+}
+
+/*
+ * Zoom and center to fit the current selection. If only one node is selected,
+ * delegates to focusNode for a snappier feel. If multiple nodes selected,
+ * computes their union bbox and fits it (similar to fitAll but scoped).
+ */
+function focusSelection() {
+  if (!selectedNodeIds.size) return;
+  if (selectedNodeIds.size === 1) {
+    focusNode(Array.from(selectedNodeIds)[0]);
+    return;
+  }
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const id of selectedNodeIds) {
+    const node = nodes.get(id);
+    if (!node) continue;
+    const dim = getNodeDimensions(node);
+    minX = Math.min(minX, node.x);
+    minY = Math.min(minY, node.y);
+    maxX = Math.max(maxX, node.x + dim.width);
+    maxY = Math.max(maxY, node.y + dim.height);
+  }
+  if (!Number.isFinite(minX)) return;
+  const padding = 80;
+  const worldWidth = (maxX - minX) + padding * 2;
+  const worldHeight = (maxY - minY) + padding * 2;
+  const rect = viewportEl.getBoundingClientRect();
+  const scaleX = rect.width / worldWidth;
+  const scaleY = rect.height / worldHeight;
+  const targetScale = clamp(Math.min(scaleX, scaleY), 0.05, 1.8);
+  const centerWorldX = (minX + maxX) / 2;
+  const centerWorldY = (minY + maxY) / 2;
+  /* B1: animate to fit selection bounds. */
+  animateViewTo(
+    targetScale,
+    rect.width / 2 - centerWorldX * targetScale,
+    rect.height / 2 - centerWorldY * targetScale,
+  );
 }
 
 function applyTransform() {
@@ -2447,8 +3839,80 @@ function applyTransform() {
   stageEl.style.transform = transform;
   gridEl.style.transform = transform;
   edgeLayerEl.style.transform = transform;
+  /* Keep cluster-frame and alignment-guide layers in lockstep. */
+  if (clusterFrameLayerEl) clusterFrameLayerEl.style.transform = transform;
+  if (alignGuideLayerEl) alignGuideLayerEl.style.transform = transform;
   zoomResetBtn.textContent = `${Math.round(state.scale * 100)}%`;
-  updateSelectionActions();
+  /* Defer selection-toolbar reposition to a rAF tick so heavy
+     getBoundingClientRect work doesn't run on every wheel/pan event. */
+  scheduleSelectionActionsRefresh();
+}
+
+/* ─── Smooth view transitions (B1) ──────────────────────────────────────────
+ * Single source of truth for animated camera moves. Used by fitAll, focusNode,
+ * focusSelection, focusCluster, setZoom, and minimap clicks. NOT used by
+ * wheel/pan handlers — those need instant per-frame response.
+ *
+ * Cancels any in-flight animation when called again, so mid-flight retargets
+ * smoothly continue from the current frame instead of jumping back.
+ *
+ * Cancels itself when the user starts dragging or scrolling, so user input
+ * always wins over animation.
+ */
+let _viewAnim = null;
+
+function cancelViewAnimation() {
+  if (_viewAnim?.raf) {
+    cancelAnimationFrame(_viewAnim.raf);
+  }
+  _viewAnim = null;
+}
+
+function animateViewTo(toScale, toOffsetX, toOffsetY, duration = 260) {
+  cancelViewAnimation();
+  /* No-op if already there */
+  const dScale = Math.abs(toScale - state.scale);
+  const dX = Math.abs(toOffsetX - state.offsetX);
+  const dY = Math.abs(toOffsetY - state.offsetY);
+  if (dScale < 0.001 && dX < 0.5 && dY < 0.5) {
+    state.scale = toScale;
+    state.offsetX = toOffsetX;
+    state.offsetY = toOffsetY;
+    applyTransform();
+    scheduleRenderMinimap();
+    return;
+  }
+
+  _viewAnim = {
+    startTime: performance.now(),
+    duration,
+    fromScale: state.scale,
+    fromX: state.offsetX,
+    fromY: state.offsetY,
+    toScale,
+    toX: toOffsetX,
+    toY: toOffsetY,
+    raf: 0,
+  };
+
+  const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+  const tick = (now) => {
+    if (!_viewAnim) return;
+    const t = Math.min((now - _viewAnim.startTime) / _viewAnim.duration, 1);
+    const e = easeOutCubic(t);
+    state.scale = _viewAnim.fromScale + (_viewAnim.toScale - _viewAnim.fromScale) * e;
+    state.offsetX = _viewAnim.fromX + (_viewAnim.toX - _viewAnim.fromX) * e;
+    state.offsetY = _viewAnim.fromY + (_viewAnim.toY - _viewAnim.fromY) * e;
+    applyTransform();
+    scheduleRenderMinimap();
+    if (t < 1) {
+      _viewAnim.raf = requestAnimationFrame(tick);
+    } else {
+      _viewAnim = null;
+    }
+  };
+  _viewAnim.raf = requestAnimationFrame(tick);
 }
 
 function clamp(value, min, max) {
@@ -2470,7 +3934,17 @@ function sendMessage() {
   }
 
   const selected = getSelectedContextNodes();
-  if (selected.length === 1 && selected[0].type === 'model' && !shouldUseSelectionSummary(selected)) {
+  /* F1: single-model selection respects state.modelSelectionMode.
+     - 'branch' → send a branch_chat to that one model only
+     - 'quote'  → fall through to the multi-model chat path below; the
+                  selection summary pipeline will quote the model's
+                  response into the context bundle automatically. */
+  if (
+    selected.length === 1 &&
+    selected[0].type === 'model' &&
+    state.modelSelectionMode === 'branch' &&
+    !shouldUseSelectionSummary(selected)
+  ) {
     sendBranch(selected[0], message);
     messageInput.value = '';
     autoResizeComposer();
@@ -2558,6 +4032,36 @@ selectionBranchBtn?.addEventListener('click', () => {
   }
 });
 selectionClearBtn?.addEventListener('click', clearSelection);
+
+/* F1: segmented control for choosing how a single-model selection behaves
+   when the user sends a new message. */
+const segModeQuote = document.getElementById('selectionModeQuote');
+const segModeBranch = document.getElementById('selectionModeBranch');
+
+function setModelSelectionMode(mode) {
+  if (mode !== 'branch' && mode !== 'quote') return;
+  state.modelSelectionMode = mode;
+  try { localStorage.setItem('nb:modelSelMode', mode); } catch (_e) {}
+  if (segModeQuote) {
+    segModeQuote.classList.toggle('active', mode === 'quote');
+    segModeQuote.setAttribute('aria-selected', String(mode === 'quote'));
+  }
+  if (segModeBranch) {
+    segModeBranch.classList.toggle('active', mode === 'branch');
+    segModeBranch.setAttribute('aria-selected', String(mode === 'branch'));
+  }
+  /* Switching from branch→quote or vice versa changes whether the
+     selection-summary pipeline should run for the current selection. */
+  if (typeof queueSelectionSummaryRefresh === 'function') {
+    queueSelectionSummaryRefresh();
+  }
+}
+
+segModeQuote?.addEventListener('click', () => setModelSelectionMode('quote'));
+segModeBranch?.addEventListener('click', () => setModelSelectionMode('branch'));
+
+/* Initial visual state synced with whatever was restored from localStorage. */
+setModelSelectionMode(state.modelSelectionMode);
 window.addEventListener('resize', updateSelectionActions);
 sendBtn.addEventListener('click', sendMessage);
 clearBtn.addEventListener('click', () => {
@@ -2574,9 +4078,16 @@ if (sidebarLogoutBtn) {
     }
   });
 }
-fitBtn.addEventListener('click', () => {
+fitBtn.addEventListener('click', (event) => {
+  /* Shift+click → fit all clusters; plain click → focus latest cluster. */
+  if (event.shiftKey) {
+    fitAll();
+    return;
+  }
   if (latestRequestId) {
     focusCluster(latestRequestId);
+  } else {
+    fitAll();
   }
 });
 zoomInBtn.addEventListener('click', () => setZoom(clamp(state.scale * 1.12, 0.2, 1.8)));
@@ -2608,6 +4119,182 @@ if (sidebarNewCanvasBtn) sidebarNewCanvasBtn.addEventListener('click', async () 
 document.addEventListener('click', (event) => {
   if (!event.target.closest('.node')) {
     clearSelection();
+  }
+});
+
+/* ─── Global keyboard shortcuts ──────────────────────────────────────────
+ *  Esc          清除选择
+ *  Cmd/Ctrl+A   全选
+ *  Cmd/Ctrl+0   适配全部到视口
+ *  Cmd/Ctrl+1   重置缩放
+ *  Cmd/Ctrl++   放大
+ *  Cmd/Ctrl+-   缩小
+ *  F            聚焦当前选中
+ *  ↑↓←→         推动选中节点 1px (Shift = 10px)
+ *  Space (按住) 平移模式（鼠标拖动 = 平移而非框选）
+ *
+ *  Always skipped when the user is typing in an input/textarea/select or
+ *  contenteditable element. */
+function isTypingTarget(target) {
+  if (!target) return false;
+  const tag = target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (target.isContentEditable) return true;
+  return false;
+}
+
+document.addEventListener('keydown', (event) => {
+  /* Track space key for pan-mode toggle, regardless of focus. */
+  if (event.code === 'Space' && !isTypingTarget(event.target)) {
+    if (!_spaceHeld) {
+      _spaceHeld = true;
+      viewportEl.classList.add('space-held');
+    }
+    /* Don't preventDefault here when typing — only when on canvas */
+    event.preventDefault();
+  }
+
+  /* E1: Cmd/Ctrl+K opens search — works even when typing in the composer
+     (Figma / VSCode / Linear convention). */
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    /* Don't hijack when search is already open */
+    if (searchOverlayEl && !searchOverlayEl.classList.contains('hidden')) return;
+    event.preventDefault();
+    openSearch();
+    return;
+  }
+
+  if (isTypingTarget(event.target)) return;
+
+  const cmd = event.metaKey || event.ctrlKey;
+
+  /* Esc — clear selection / cancel marquee */
+  if (event.key === 'Escape') {
+    cancelMarquee();
+    if (selectedNodeIds.size) clearSelection();
+    event.preventDefault();
+    return;
+  }
+
+  /* C4: Delete / Backspace — hide selected clusters (undoable) */
+  if ((event.key === 'Delete' || event.key === 'Backspace') && selectedNodeIds.size) {
+    deleteSelected();
+    event.preventDefault();
+    return;
+  }
+
+  /* Cmd/Ctrl+A — select all nodes on canvas */
+  if (cmd && event.key.toLowerCase() === 'a') {
+    selectedNodeIds.clear();
+    for (const id of nodes.keys()) selectedNodeIds.add(id);
+    selectedNodeId = selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null;
+    state.selectionSource = 'keyboard';
+    renderSelectionState();
+    updateComposerHint();
+    event.preventDefault();
+    return;
+  }
+
+  /* Cmd/Ctrl+0 — fit all clusters to viewport */
+  if (cmd && event.key === '0') {
+    fitAll();
+    event.preventDefault();
+    return;
+  }
+
+  /* Cmd/Ctrl+1 — reset zoom to default */
+  if (cmd && event.key === '1') {
+    setZoom(DEFAULT_SCALE);
+    event.preventDefault();
+    return;
+  }
+
+  /* Cmd/Ctrl++ / Cmd/Ctrl+= — zoom in */
+  if (cmd && (event.key === '+' || event.key === '=')) {
+    setZoom(clamp(state.scale * 1.12, 0.2, 1.8));
+    event.preventDefault();
+    return;
+  }
+
+  /* Cmd/Ctrl+- — zoom out */
+  if (cmd && event.key === '-') {
+    setZoom(clamp(state.scale * 0.88, 0.2, 1.8));
+    event.preventDefault();
+    return;
+  }
+
+  /* F — focus current selection (or latest cluster if nothing selected) */
+  if (event.key === 'f' || event.key === 'F') {
+    if (cmd) return; // don't hijack Cmd+F (browser find)
+    if (selectedNodeIds.size) {
+      focusSelection();
+    } else if (latestRequestId) {
+      focusCluster(latestRequestId);
+    }
+    event.preventDefault();
+    return;
+  }
+
+  /* Arrow keys — nudge selected nodes (1px or 10px with Shift) */
+  if (selectedNodeIds.size && (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    const step = event.shiftKey ? 10 : 1;
+    let dx = 0, dy = 0;
+    if (event.key === 'ArrowLeft') dx = -step;
+    if (event.key === 'ArrowRight') dx = step;
+    if (event.key === 'ArrowUp') dy = -step;
+    if (event.key === 'ArrowDown') dy = step;
+    const affectedClusters = new Set();
+    /* C1: capture history for arrow nudges too */
+    const moveOps = [];
+    for (const id of selectedNodeIds) {
+      const n = nodes.get(id);
+      if (!n) continue;
+      const fromX = n.x;
+      const fromY = n.y;
+      n.x += dx;
+      n.y += dy;
+      n.root.style.left = `${n.x}px`;
+      n.root.style.top = `${n.y}px`;
+      moveOps.push({ nodeId: id, fromX, fromY, toX: n.x, toY: n.y });
+      const rid = findClusterIdForNode(id);
+      if (rid) affectedClusters.add(rid);
+    }
+    if (moveOps.length) pushHistory({ type: 'move', ops: moveOps });
+    for (const rid of affectedClusters) {
+      updateClusterBounds(rid);
+      schedulePositionSave(rid);
+    }
+    scheduleRenderEdges();
+    scheduleRenderMinimap();
+    scheduleSelectionActionsRefresh();
+    event.preventDefault();
+    return;
+  }
+
+  /* Cmd/Ctrl+Z — undo */
+  if (cmd && !event.shiftKey && event.key.toLowerCase() === 'z') {
+    undo();
+    event.preventDefault();
+    return;
+  }
+  /* Cmd/Ctrl+Shift+Z — redo */
+  if (cmd && event.shiftKey && event.key.toLowerCase() === 'z') {
+    redo();
+    event.preventDefault();
+    return;
+  }
+  /* Cmd/Ctrl+Y — redo (Windows convention) */
+  if (cmd && event.key.toLowerCase() === 'y') {
+    redo();
+    event.preventDefault();
+    return;
+  }
+});
+
+document.addEventListener('keyup', (event) => {
+  if (event.code === 'Space') {
+    _spaceHeld = false;
+    viewportEl.classList.remove('space-held');
   }
 });
 

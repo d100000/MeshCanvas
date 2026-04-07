@@ -34,7 +34,7 @@ ADMIN_STATIC_DIR = STATIC_DIR / "admin"
 
 # ── Asset versioning ─────────────────────────────────────────────────────────
 
-ASSET_VERSION = "20260403a"
+ASSET_VERSION = "20260403e"
 _STATIC_RE = _re.compile(r'(/static/[^"\'?]+\.(css|js|svg|png|ico))(\?v=[^"\']*)?')
 # 匹配 ES module 的 import 语句: from './xxx.js' 或 from "./xxx.js"
 _ES_IMPORT_RE = _re.compile(r"""(from\s+['"])(\./[^'"?]+\.js)(\?v=[^'"]*)?(['"])""")

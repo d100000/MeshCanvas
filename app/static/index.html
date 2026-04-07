@@ -61,14 +61,30 @@
         <div id="canvasViewport" class="canvas-viewport">
           <div class="canvas-grid"></div>
           <svg id="edgeLayer" class="edge-layer" aria-hidden="true"></svg>
+          <div id="clusterFrameLayer" class="cluster-frame-layer"></div>
+          <svg id="alignGuideLayer" class="align-guide-layer" aria-hidden="true"></svg>
           <div id="canvasStage" class="canvas-stage"></div>
           <div id="selectionActions" class="selection-actions hidden">
-            <button id="selectionContinueBtn" type="button" class="small-btn">继续对话</button>
+            <div id="selectionModeSegment" class="seg-control hidden" role="tablist" aria-label="模型选择模式">
+              <button id="selectionModeQuote" type="button" class="seg-btn active" role="tab" aria-selected="true" title="把当前回答作为上下文，让所有模型继续讨论">📤 引用到所有模型</button>
+              <button id="selectionModeBranch" type="button" class="seg-btn" role="tab" aria-selected="false" title="只用当前模型继续延展，不打扰其他模型">⎇ 仅此模型</button>
+            </div>
+            <button id="selectionContinueBtn" type="button" class="small-btn">继续讨论</button>
             <button id="selectionBranchBtn" type="button" class="small-btn">建立分支</button>
             <button id="selectionClearBtn" type="button" class="small-btn">清除选择</button>
           </div>
           <div id="needsSetupBanner" class="needs-setup-banner hidden">
             <span>管理员尚未完成模型配置，暂时无法使用对话功能，请联系管理员。</span>
+          </div>
+          <div id="contextMenu" class="context-menu hidden" role="menu" aria-label="右键菜单"></div>
+          <div id="searchOverlay" class="search-overlay hidden" role="dialog" aria-label="全局搜索">
+            <div class="search-panel">
+              <input id="searchInput" type="text" placeholder="搜索画布上的对话…" autocomplete="off" />
+              <div id="searchResults" class="search-results"></div>
+              <div class="search-footer">
+                <span><kbd>↑↓</kbd> 选择 · <kbd>↵</kbd> 跳转 · <kbd>Esc</kbd> 关闭</span>
+              </div>
+            </div>
           </div>
           <aside id="minimap" class="minimap">
             <div class="minimap-title">Map</div>

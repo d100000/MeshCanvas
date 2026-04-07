@@ -50,12 +50,28 @@ uvicorn app.main:app --reload
 
 手动初始化数据库：`python -m app.init_db`（会确保默认管理员存在；`uvicorn` 启动时也执行相同逻辑）。已存在的 `admin` 仅纠正 `role`，**不会**在每次启动时重置密码。
 
+## 测试
+
+```bash
+pytest                                # 运行全部测试
+pytest tests/test_auth.py             # 单个文件
+pytest tests/test_auth.py::test_login_success  # 单个测试
+pytest -k "captcha"                   # 按名称匹配
+pytest -x                             # 失败立即停止
+```
+
+`pyproject.toml` 配置了 `asyncio_mode = "auto"`，无需为协程测试加 `@pytest.mark.asyncio`。
+
+`tests/conftest.py` 在导入 app 之前，会通过环境变量将 `LOCAL_DB_PATH`、`REQUEST_LOG_DIR`、`MODELS_SETTING_PATH` 重定向到临时目录，并写入测试用的 `models_setting.json`，避免污染本地数据库和触发 `/setup` 重定向。**新增测试模块时不要在 import 前修改这些环境变量**——已经在 conftest 里设置好了。
+
+无 ruff/flake8/mypy 等 lint 配置。
+
 ## 架构说明
 
 ### 请求生命周期
 
-1. 已认证客户端通过 WebSocket 向 `/ws/chat` 发送消息
-2. `app/main.py` 将请求分发给 `app/chat_service.py` 中的 `MultiModelChatService`
+1. 已认证客户端通过 WebSocket 向 `/ws/chat` 发送消息（`app/routers/chat_ws.py` 处理）
+2. router 通过 `Depends(get_chat_service)` 拿到 `app/chat_service.py` 中的单例 `MultiModelChatService`
 3. 服务为每个模型创建独立的 `asyncio` 并发任务，通过 `app/llm_client.py` 统一客户端调用（根据 `api_format` 自动选择 OpenAI 或 Anthropic 后端）
 4. 每个任务将 delta 流式块通过同一 WebSocket 连接返回
 5. 前端 `app/static/app.js` 实时将流式内容渲染为画布节点
@@ -80,10 +96,6 @@ uvicorn app.main:app --reload
 
 服务端推送 JSON 事件流，`event` 字段：`stream_start`、`stream_delta`、`stream_end`、`stream_error`、`search_result`、`round_start`。
 
-### 无测试 / 无 Lint 配置
-
-当前无测试文件，无 ruff/flake8/mypy 配置。需调试时直接运行服务并通过浏览器或 WebSocket 客户端验证。
-
 ### 前端画布（`app/static/app.js`）
 
 纯原生 JS 无限画布，无任何框架。核心概念：
@@ -92,11 +104,26 @@ uvicorn app.main:app --reload
 - 平移（空格键 + 拖拽）、缩放（滚轮）、节点拖动、框选、小地图导航
 - WebSocket 客户端管理流式状态，将 delta 文本追加到节点
 
-### 后端模块
+### 后端模块组织
 
-| 文件 | 职责 |
+`app/main.py` 仅负责创建 FastAPI 实例、注册中间件、挂载静态资源、`include_router()` 各个路由模块；**所有路由处理函数都在 `app/routers/*.py` 里**，按业务域拆分：
+
+| 路由文件 | 负责的端点 |
+|---------|-----------|
+| `app/routers/pages.py` | HTML 页面（`/`、`/login`、`/app`、`/setup`、`/admin/dashboard` 等） |
+| `app/routers/auth.py` | `/api/auth/*`（注册、登录、登出、session 检查、注册开关查询） |
+| `app/routers/admin.py` | `/api/admin/*`（用户管理、定价、用量、系统配置、审计日志） |
+| `app/routers/user.py` | `/api/user/*`（余额、自定义 API Key、用量查询） |
+| `app/routers/models.py` | `/api/models/*`、`/api/captcha`、`/api/setup`（模型列表、配置初始化） |
+| `app/routers/canvas.py` | `/api/canvas/*`（画布持久化与节点坐标） |
+| `app/routers/chat_ws.py` | `WebSocket /ws/chat`（多模型流式对话） |
+
+`app/schemas/*.py` 是 Pydantic 数据模型，按相同业务域拆分（`auth.py` / `admin.py` / `user.py` / `canvas.py` / `models.py` / `setup.py`）。
+
+`app/deps.py` 是**依赖注入容器**：单例化的 `AuthManager`、`LocalDatabase`、`MultiModelChatService`、`FirecrawlSearchService`、`RateLimiter`、`RequestLogger` 等都从这里 `Depends(...)` 出来；同时承载 `ASSET_VERSION`、`_inject_asset_version()` 缓存失效中间件，以及 `STATIC_DIR` / 模板路径常量。新增路由需要的服务请从 `app/deps.py` 取，不要在 router 里直接 `LocalDatabase()`。
+
+| 核心服务文件 | 职责 |
 |------|------|
-| `app/main.py` | FastAPI 应用、HTTP 路由（含管理后台 API）、WebSocket 分发 |
 | `app/llm_client.py` | 统一 LLM 客户端抽象（OpenAI/Anthropic 双格式），工厂函数 `create_llm_client()` |
 | `app/chat_service.py` | 并发模型调用、流式处理、讨论轮次、Token 用量记录 |
 | `app/database.py` | SQLite 封装（WAL 模式，schema 版本管理至 v7） |
@@ -106,6 +133,7 @@ uvicorn app.main:app --reload
 | `app/search_service.py` | Firecrawl API 集成 |
 | `app/request_logger.py` | 每日 JSONL 日志，路径为 `logs/requests-YYYY-MM-DD.jsonl` |
 | `app/bootstrap_admin.py` | 确保默认管理员存在，种子化管理员设置 |
+| `app/captcha.py` | 算术验证码生成与校验（带 HMAC token） |
 
 ### 管理后台
 
