@@ -25,3 +25,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Claude Code tooling (local settings, plans, worktree metadata)
+.claude/
