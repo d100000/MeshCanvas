@@ -81,10 +81,13 @@ function sendMessage() {
     }
   }
 
-  // 捕获选中的上下文节点 ID，用于后续创建连线
+  // 捕获选中的上下文节点 ID，用于后续创建连线（in-memory 实时路径）
+  // v8: 同一份 ID 也随 WS payload 发给后端，用于持久化
+  let contextNodeIdsForPayload = [];
   if (selected.length > 0) {
     if (!appState._pendingContextQueue) appState._pendingContextQueue = [];
-    appState._pendingContextQueue.push(selected.map((n) => n.nodeId));
+    contextNodeIdsForPayload = selected.map((n) => n.nodeId);
+    appState._pendingContextQueue.push(contextNodeIdsForPayload);
   }
 
   // 保存原始问题用于用户节点展示（避免展示完整上下文拼接内容）
@@ -111,6 +114,7 @@ function sendMessage() {
         search_enabled: getSearchMode(),
         think_enabled: thinkToggleEl.checked,
         canvas_id: appState.currentCanvasId,
+        context_node_ids: contextNodeIdsForPayload,
       })
     );
   } catch (_e) {

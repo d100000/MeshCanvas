@@ -123,21 +123,9 @@ async def chat_socket(websocket: WebSocket) -> None:
 
     async def run_thread(thread: ThreadState) -> None:
         try:
-            await service._send_event(
-                websocket,
-                {
-                    "type": "user",
-                    "request_id": thread.request_id,
-                    "content": thread.meta.get("display_message", thread.user_message),
-                    "discussion_rounds": thread.discussion_rounds,
-                    "models": thread.models,
-                    "search_enabled": thread.search_enabled,
-                    "think_enabled": thread.think_enabled,
-                    "parent_request_id": thread.parent_request_id,
-                    "source_model": thread.source_model,
-                    "source_round": thread.source_round,
-                },
-            )
+            # v8: insert DB row BEFORE emitting user event so the frontend's
+            # immediate schedulePositionSave PUT can find its owner row.
+            # (Previously, a race allowed the PUT to arrive as 404.)
             await database.record_chat_request(
                 request_id=thread.request_id,
                 client_id=client_id,
@@ -152,6 +140,22 @@ async def chat_socket(websocket: WebSocket) -> None:
                 status="queued",
                 canvas_id=thread.canvas_id,
                 user_id=user["user_id"],
+                context_node_ids=thread.context_node_ids,
+            )
+            await service._send_event(
+                websocket,
+                {
+                    "type": "user",
+                    "request_id": thread.request_id,
+                    "content": thread.meta.get("display_message", thread.user_message),
+                    "discussion_rounds": thread.discussion_rounds,
+                    "models": thread.models,
+                    "search_enabled": thread.search_enabled,
+                    "think_enabled": thread.think_enabled,
+                    "parent_request_id": thread.parent_request_id,
+                    "source_model": thread.source_model,
+                    "source_round": thread.source_round,
+                },
             )
             create_background_task(
                 request_logger.emit(

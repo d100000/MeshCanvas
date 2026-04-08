@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, Request
@@ -102,7 +103,16 @@ async def save_cluster_position(request_id: str, request: Request, body: Cluster
         await _require_origin(request)
     except OriginError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=403)
-    ok = await database.upsert_cluster_position(request_id, user["user_id"], body.user_x, body.user_y, body.model_y)
+    ok = await database.upsert_cluster_position(
+        request_id,
+        user["user_id"],
+        body.user_x,
+        body.user_y,
+        body.model_y,
+        model_positions_json=json.dumps(body.model_positions or {}, ensure_ascii=False),
+        conclusion_x=body.conclusion_x,
+        conclusion_y=body.conclusion_y,
+    )
     if not ok:
         return JSONResponse({"detail": "请求不存在或无权限。"}, status_code=404)
     return JSONResponse({"ok": True})

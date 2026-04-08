@@ -14,11 +14,33 @@ from app.config import get_database_path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 _TOUCH_SESSION_DEBOUNCE_SECONDS = 300  # 同一 token 5 分钟内最多写一次
 _TOUCH_CACHE_MAX_ENTRIES = 10_000
+
+
+def _safe_json_list(raw: Any) -> list:
+    """Defensively deserialize a JSON array column. Never raises."""
+    try:
+        if not raw:
+            return []
+        value = json.loads(raw)
+        return value if isinstance(value, list) else []
+    except Exception:
+        return []
+
+
+def _safe_json_dict(raw: Any) -> dict:
+    """Defensively deserialize a JSON object column. Never raises."""
+    try:
+        if not raw:
+            return {}
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
 
 
 class LocalDatabase:
@@ -133,6 +155,7 @@ class LocalDatabase:
         status: str = "queued",
         canvas_id: str | None = None,
         user_id: int | None = None,
+        context_node_ids: list[str] | None = None,
     ) -> None:
         await self._run_write(
             self._record_chat_request_sync,
@@ -149,6 +172,7 @@ class LocalDatabase:
             status,
             canvas_id,
             user_id,
+            context_node_ids,
         )
 
     async def mark_request_status(self, request_id: str, status: str) -> None:
@@ -219,12 +243,28 @@ class LocalDatabase:
         return await self._run_read(self._get_canvas_state_sync, None, canvas_id, user_id)
 
     async def upsert_cluster_position(
-        self, request_id: str, user_id: int, user_x: float, user_y: float, model_y: float
+        self,
+        request_id: str,
+        user_id: int,
+        user_x: float,
+        user_y: float,
+        model_y: float,
+        model_positions_json: str = "{}",
+        conclusion_x: float | None = None,
+        conclusion_y: float | None = None,
     ) -> bool:
         try:
             async with self._lock:
                 return await asyncio.to_thread(
-                    self._upsert_cluster_position_sync, request_id, user_id, user_x, user_y, model_y
+                    self._upsert_cluster_position_sync,
+                    request_id,
+                    user_id,
+                    user_x,
+                    user_y,
+                    model_y,
+                    model_positions_json,
+                    conclusion_x,
+                    conclusion_y,
                 )
         except Exception:
             logger.exception("upsert_cluster_position failed request_id=%s", request_id)
@@ -494,7 +534,8 @@ class LocalDatabase:
                     think_enabled INTEGER NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    context_node_ids TEXT NOT NULL DEFAULT '[]'
                 );
 
                 CREATE TABLE IF NOT EXISTS model_results (
@@ -535,6 +576,9 @@ class LocalDatabase:
                     user_y REAL NOT NULL,
                     model_y REAL NOT NULL,
                     updated_at TEXT NOT NULL,
+                    model_positions_json TEXT NOT NULL DEFAULT '{}',
+                    conclusion_x REAL,
+                    conclusion_y REAL,
                     FOREIGN KEY(request_id) REFERENCES chat_requests(request_id) ON DELETE CASCADE
                 );
 
@@ -633,6 +677,7 @@ class LocalDatabase:
             )
             now = self._now()
             self._ensure_chat_requests_schema_sync(conn)
+            self._ensure_cluster_positions_schema_sync(conn)
             current_version = self._get_schema_version_sync(conn)
             if current_version < 3:
                 self._migrate_v2_to_v3_sync(conn)
@@ -644,6 +689,8 @@ class LocalDatabase:
                 self._migrate_v5_to_v6_sync(conn)
             if current_version < 7:
                 self._migrate_v6_to_v7_sync(conn)
+            if current_version < 8:
+                self._migrate_v7_to_v8_sync(conn)
             conn.execute(
                 """
                 INSERT INTO app_meta(key, value, updated_at)
@@ -799,8 +846,10 @@ class LocalDatabase:
         status: str,
         canvas_id: str | None,
         user_id: int | None,
+        context_node_ids: list[str] | None,
     ) -> None:
         now = self._now()
+        ctx_json = json.dumps(context_node_ids or [], ensure_ascii=False)
         with self._connect() as conn:
             conn.execute(
                 """
@@ -808,8 +857,8 @@ class LocalDatabase:
                     request_id, client_id, canvas_id, user_id,
                     parent_request_id, source_model, source_round,
                     models_json, user_message, discussion_rounds, search_enabled,
-                    think_enabled, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    think_enabled, status, created_at, updated_at, context_node_ids
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(request_id) DO UPDATE SET
                     client_id=excluded.client_id,
                     canvas_id=excluded.canvas_id,
@@ -823,7 +872,8 @@ class LocalDatabase:
                     search_enabled=excluded.search_enabled,
                     think_enabled=excluded.think_enabled,
                     status=excluded.status,
-                    updated_at=excluded.updated_at
+                    updated_at=excluded.updated_at,
+                    context_node_ids=excluded.context_node_ids
                 """,
                 (
                     request_id,
@@ -841,6 +891,7 @@ class LocalDatabase:
                     status,
                     now,
                     now,
+                    ctx_json,
                 ),
             )
             conn.commit()
@@ -929,6 +980,7 @@ class LocalDatabase:
         for column_name, col_sql in {
             "canvas_id": "canvas_id TEXT",
             "user_id": "user_id INTEGER",
+            "context_node_ids": "context_node_ids TEXT NOT NULL DEFAULT '[]'",
         }.items():
             if column_name in columns:
                 continue
@@ -939,6 +991,22 @@ class LocalDatabase:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_requests_user_id ON chat_requests(user_id)"
         )
+        conn.commit()
+
+    def _ensure_cluster_positions_schema_sync(self, conn: sqlite3.Connection) -> None:
+        """Idempotent add-column for cluster_positions (v8 schema)."""
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(cluster_positions)").fetchall()
+        }
+        for column_name, col_sql in {
+            "model_positions_json": "model_positions_json TEXT NOT NULL DEFAULT '{}'",
+            "conclusion_x": "conclusion_x REAL",
+            "conclusion_y": "conclusion_y REAL",
+        }.items():
+            if column_name in columns:
+                continue
+            conn.execute(f"ALTER TABLE cluster_positions ADD COLUMN {col_sql}")
         conn.commit()
 
     def _migrate_v2_to_v3_sync(self, conn: sqlite3.Connection) -> None:
@@ -1054,6 +1122,13 @@ class LocalDatabase:
             );
             """
         )
+
+    def _migrate_v7_to_v8_sync(self, conn: sqlite3.Connection) -> None:
+        """v8: persist context_node_ids (chat_requests) + per-model / conclusion
+        positions (cluster_positions) so multi-select placements, custom node
+        rearrangements, and context-continuation edges survive page reload."""
+        self._ensure_chat_requests_schema_sync(conn)
+        self._ensure_cluster_positions_schema_sync(conn)
 
     # ── billing / admin sync helpers ──
 
@@ -1626,7 +1701,9 @@ class LocalDatabase:
                 SELECT cr.request_id, cr.user_message, cr.models_json, cr.discussion_rounds,
                        cr.search_enabled, cr.think_enabled, cr.parent_request_id,
                        cr.source_model, cr.source_round, cr.status, cr.created_at,
-                       cp.user_x, cp.user_y, cp.model_y
+                       cp.user_x, cp.user_y, cp.model_y,
+                       cr.context_node_ids,
+                       cp.model_positions_json, cp.conclusion_x, cp.conclusion_y
                 FROM chat_requests cr
                 LEFT JOIN cluster_positions cp ON cp.request_id = cr.request_id
                 WHERE cr.canvas_id = ? AND cr.user_id = ?
@@ -1657,10 +1734,16 @@ class LocalDatabase:
             for row in request_rows:
                 request_id = row[0]
                 results = results_by_request.get(request_id, [])
-                position = (
-                    {"user_x": row[11], "user_y": row[12], "model_y": row[13]}
-                    if row[11] is not None else None
-                )
+                position = None
+                if row[11] is not None:
+                    position = {
+                        "user_x": row[11],
+                        "user_y": row[12],
+                        "model_y": row[13],
+                        "model_positions": _safe_json_dict(row[15]),
+                        "conclusion_x": row[16],  # may be None
+                        "conclusion_y": row[17],  # may be None
+                    }
                 requests.append({
                     "request_id": row[0],
                     "user_message": row[1],
@@ -1674,6 +1757,7 @@ class LocalDatabase:
                     "status": row[9],
                     "created_at": row[10],
                     "position": position,
+                    "context_node_ids": _safe_json_list(row[14]),
                     "results": results,
                 })
             summaries_map: dict[str, dict[str, Any]] = {}
@@ -1691,7 +1775,15 @@ class LocalDatabase:
         return {"canvas_id": canvas_row[0], "name": canvas_row[1], "created_at": canvas_row[2], "requests": requests}
 
     def _upsert_cluster_position_sync(
-        self, request_id: str, user_id: int, user_x: float, user_y: float, model_y: float
+        self,
+        request_id: str,
+        user_id: int,
+        user_x: float,
+        user_y: float,
+        model_y: float,
+        model_positions_json: str = "{}",
+        conclusion_x: float | None = None,
+        conclusion_y: float | None = None,
     ) -> bool:
         now = self._now()
         with self._connect() as conn:
@@ -1703,13 +1795,28 @@ class LocalDatabase:
                 return False
             conn.execute(
                 """
-                INSERT INTO cluster_positions(request_id, user_x, user_y, model_y, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO cluster_positions(
+                    request_id, user_x, user_y, model_y, updated_at,
+                    model_positions_json, conclusion_x, conclusion_y
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(request_id) DO UPDATE SET
                     user_x=excluded.user_x, user_y=excluded.user_y,
-                    model_y=excluded.model_y, updated_at=excluded.updated_at
+                    model_y=excluded.model_y, updated_at=excluded.updated_at,
+                    model_positions_json=excluded.model_positions_json,
+                    conclusion_x=excluded.conclusion_x,
+                    conclusion_y=excluded.conclusion_y
                 """,
-                (request_id, user_x, user_y, model_y, now),
+                (
+                    request_id,
+                    user_x,
+                    user_y,
+                    model_y,
+                    now,
+                    model_positions_json,
+                    conclusion_x,
+                    conclusion_y,
+                ),
             )
             conn.commit()
         return True

@@ -56,6 +56,11 @@ export function connect() {
       cluster.isRunning = false;
       cluster.isCancelling = false;
     }
+    // v8: drop any in-flight send-queue entries — if the backend never
+    // emits the corresponding 'user' events, a reconnected session would
+    // otherwise consume stale queue entries and attach wrong context edges.
+    appState._pendingContextQueue = [];
+    appState._pendingUserDisplay = [];
     refreshStatus();
     const delay = Math.min(1200 * Math.pow(1.5, appState.reconnectAttempts), MAX_RECONNECT_DELAY);
     appState.reconnectAttempts += 1;
@@ -345,6 +350,9 @@ function handleConclusionStart(payload) {
   if (cluster.conclusionNodeId && cluster.conclusionNodeId !== nodeId) {
     const oldNode = nodes.get(cluster.conclusionNodeId);
     if (oldNode) { oldNode.root.remove(); nodes.delete(cluster.conclusionNodeId); }
+    // v8: delete the edge pointing to the old conclusion node so the edges
+    // Map doesn't accumulate orphans on every conclusion retry.
+    edges.delete(`edge-user-${payload.request_id}-${cluster.conclusionNodeId}`);
   }
 
   // 使用实际集群边界计算结论节点位置，避免与搜索面板展开后的节点重叠

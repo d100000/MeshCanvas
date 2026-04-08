@@ -101,12 +101,41 @@ export function schedulePositionSave(requestId) {
     const cluster = requestClusters.get(requestId);
     const userNode = nodes.get(cluster?.userNodeId);
     if (!cluster || !userNode) return;
+
+    // v8: persist per-model absolute positions so custom arrangements inside
+    // a cluster (multi-select drag, model-only drag) survive reload.
+    const modelPositions = {};
+    for (const mid of cluster.modelNodeIds || []) {
+      const m = nodes.get(mid);
+      if (m && m.model) {
+        modelPositions[m.model] = { x: m.x, y: m.y };
+      }
+    }
+
+    // v8: persist conclusion node position (previously recomputed on reload)
+    let conclusion_x = null;
+    let conclusion_y = null;
+    if (cluster.conclusionNodeId) {
+      const cn = nodes.get(cluster.conclusionNodeId);
+      if (cn) {
+        conclusion_x = cn.x;
+        conclusion_y = cn.y;
+      }
+    }
+
     try {
       const response = await fetch(`/api/cluster-positions/${requestId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ user_x: userNode.x, user_y: userNode.y, model_y: cluster.modelY }),
+        body: JSON.stringify({
+          user_x: userNode.x,
+          user_y: userNode.y,
+          model_y: cluster.modelY,
+          model_positions: modelPositions,
+          conclusion_x,
+          conclusion_y,
+        }),
       });
       if (!response.ok) {
         throw new Error('save failed');
@@ -195,6 +224,11 @@ export function createCluster({
   updateClusterBounds(requestId);
   renderEdges();
   renderMinimap();
+  // v8: persist the intelligently-placed initial position immediately so
+  // multi-select placement (anchored to selection bbox) survives reload
+  // even when the user never manually drags. The 500 ms debounce inside
+  // schedulePositionSave coalesces this with any rapid drags that follow.
+  schedulePositionSave(requestId);
 }
 
 // ── Place cluster ────────────────────────────────────────────────────────────
@@ -392,6 +426,22 @@ export function replayCluster(req) {
     });
   }
 
+  // v8: rebuild context_continuation edges from persisted node IDs.
+  // Source nodes are guaranteed to be created earlier than this request (the
+  // canvas state SELECT is ordered by created_at ASC), so by the time we get
+  // here they already exist in the `nodes` Map. nodes.has() guards the edge
+  // case where a source cluster was deleted entirely.
+  const ctxIds = Array.isArray(req.context_node_ids) ? req.context_node_ids : [];
+  for (const ctxNodeId of ctxIds) {
+    if (!nodes.has(ctxNodeId)) continue;
+    addEdge({
+      id: `edge-ctx-${ctxNodeId}-${userNodeId}`,
+      sourceId: ctxNodeId,
+      targetId: userNodeId,
+      type: 'context_continuation',
+    });
+  }
+
   const cluster = {
     requestId: request_id,
     kind: parent_request_id ? 'branch' : 'main',
@@ -432,6 +482,23 @@ export function replayCluster(req) {
       type: 'question_to_answer',
     });
   });
+
+  // v8: override derived model positions with persisted per-model absolute
+  // positions (if any). This makes custom arrangements (user dragging a
+  // single model node out of alignment) survive page reload.
+  if (position && position.model_positions) {
+    for (const modelName in position.model_positions) {
+      const mn = getModelNode(request_id, modelName);
+      if (!mn) continue;
+      const mp = position.model_positions[modelName];
+      if (typeof mp?.x === 'number' && typeof mp?.y === 'number') {
+        mn.x = mp.x;
+        mn.y = mp.y;
+        mn.root.style.left = `${mn.x}px`;
+        mn.root.style.top = `${mn.y}px`;
+      }
+    }
+  }
 
   const modelResultsMap = {};
   for (const r of results) {
@@ -484,6 +551,12 @@ export function replayCluster(req) {
     if (modelNodes.length > 0) {
       const lastModel = modelNodes[modelNodes.length - 1];
       cy = lastModel.y + MODEL_NODE_HEIGHT + 40;
+    }
+    // v8: override with persisted conclusion position if the user had
+    // manually dragged it before reloading.
+    if (position && typeof position.conclusion_x === 'number' && typeof position.conclusion_y === 'number') {
+      cx = position.conclusion_x;
+      cy = position.conclusion_y;
     }
     createConclusionNode({
       nodeId: conclusionNodeId,

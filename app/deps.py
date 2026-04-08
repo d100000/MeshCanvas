@@ -34,7 +34,7 @@ ADMIN_STATIC_DIR = STATIC_DIR / "admin"
 
 # ── Asset versioning ─────────────────────────────────────────────────────────
 
-ASSET_VERSION = "20260408a"
+ASSET_VERSION = "20260408b"
 _STATIC_RE = _re.compile(r'(/static/[^"\'?]+\.(css|js|svg|png|ico))(\?v=[^"\']*)?')
 # 匹配 ES module 的 import 语句: from './xxx.js' 或 from "./xxx.js"
 _ES_IMPORT_RE = _re.compile(r"""(from\s+['"])(\./[^'"?]+\.js)(\?v=[^'"]*)?(['"])""")
@@ -270,6 +270,9 @@ class ThreadState:
     reserved_points: float = 0.0
     charged_search_points: float = 0.0
     meta: dict[str, str] = field(default_factory=dict)
+    # v8: node IDs the user had selected when creating this chat, so the
+    # frontend can reconstruct context_continuation edges after reload.
+    context_node_ids: list[str] = field(default_factory=list)
 
 
 # ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -1787,6 +1790,18 @@ async def _build_main_thread(
     search_enabled = _parse_search_mode(payload.get("search_enabled"))
     canvas_id = str(payload.get("canvas_id", "")).strip() or None
 
+    # v8: parse optional context_node_ids from the chat payload. This is how
+    # the frontend tells the backend "the user had these nodes selected when
+    # they hit Send". Defensive: cap at 64 IDs, coerce to strings, ignore
+    # malformed entries.
+    raw_ctx = payload.get("context_node_ids") or []
+    if isinstance(raw_ctx, list):
+        context_node_ids = [
+            str(x) for x in raw_ctx if isinstance(x, (str, int))
+        ][:64]
+    else:
+        context_node_ids = []
+
     histories: dict[str, list[dict[str, str]]] = {}
     for model in service.models:
         histories[model] = _build_initial_history(
@@ -1806,6 +1821,7 @@ async def _build_main_thread(
         think_enabled=think_enabled,
         search_bundle=None,
         canvas_id=canvas_id,
+        context_node_ids=context_node_ids,
     )
 
 

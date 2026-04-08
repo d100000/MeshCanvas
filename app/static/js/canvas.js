@@ -625,6 +625,10 @@ export function clearCanvas() {
   edges.clear();
   pendingSearchEvents.clear();
   selectedNodeIds.clear();
+  // v8: clear pending send queues so a stale entry from the old canvas
+  // cannot pollute the next chat's context edges.
+  appState._pendingContextQueue = [];
+  appState._pendingUserDisplay = [];
   clearSelectionSummary();
   state.selectionSource = 'none';
   appState.clusterCount = 0;
